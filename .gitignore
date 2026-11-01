@@ -1,0 +1,23 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.iml
+captures/
+.kotlin/
+
+# 签名文件与口令只留在本机
+*.jks
+*.keystore
+
+# IDE
+.idea/
+.vscode/
+
+# Web 控制台构建产物
+node_modules/
+web/dist/
+
+# OS
+.DS_Store
+Thumbs.db
