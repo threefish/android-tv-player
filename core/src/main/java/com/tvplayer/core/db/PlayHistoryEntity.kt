@@ -1,5 +1,6 @@
 package com.tvplayer.core.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -18,5 +19,7 @@ data class PlayHistoryEntity(
     val fileName: String,
     val position: Long,
     val duration: Long,
+    @ColumnInfo(defaultValue = "0")
+    val playCount: Int = 0,
     val lastPlayedTime: Long = System.currentTimeMillis()
 )

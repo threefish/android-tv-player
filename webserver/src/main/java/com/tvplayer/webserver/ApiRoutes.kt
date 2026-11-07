@@ -3,8 +3,10 @@ package com.tvplayer.webserver
 import com.tvplayer.ai.chat.ChatService
 import com.tvplayer.core.model.AiProviderConfig
 import com.tvplayer.core.model.PlayHistory
+import com.tvplayer.core.model.PlayReminder
 import com.tvplayer.core.model.WebDavConfig
 import com.tvplayer.core.repository.AiProviderRepository
+import com.tvplayer.core.repository.AppSettingsRepository
 import com.tvplayer.core.repository.FileRepository
 import com.tvplayer.core.repository.PlayHistoryRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
@@ -29,6 +31,7 @@ fun Routing.configureApiRoutes(
     syncService: SyncService,
     chatService: ChatService,
     aiProviderRepository: com.tvplayer.core.repository.AiProviderRepository,
+    appSettingsRepository: AppSettingsRepository,
     webSocketService: WebSocketService,
     inputSessionManager: InputSessionManager,
     serverPort: () -> Int
@@ -302,6 +305,21 @@ fun Routing.configureApiRoutes(
             call.respond(SuccessResponse(success = true))
         }
 
+        // 播放提醒：播放达到设定分钟数后自动暂停休息
+        get("/config/play-reminder") {
+            val reminder = appSettingsRepository.getPlayReminder()
+            call.respond(PlayReminderDto(enabled = reminder.enabled, minutes = reminder.minutes))
+        }
+
+        put("/config/play-reminder") {
+            val body = call.receive<PlayReminderDto>()
+            if (body.minutes !in 1..240) {
+                return@put call.respond(HttpStatusCode.BadRequest, "minutes must be 1..240")
+            }
+            appSettingsRepository.setPlayReminder(PlayReminder(enabled = body.enabled, minutes = body.minutes))
+            call.respond(SuccessResponse(success = true))
+        }
+
         // QR Code Input
         post("/input/create") {
             val session = inputSessionManager.createSession()
@@ -467,6 +485,9 @@ data class AiProviderConfigDto(
     val model: String = "",
     val isActive: Boolean = false
 )
+
+@Serializable
+data class PlayReminderDto(val enabled: Boolean = false, val minutes: Int = 15)
 
 @Serializable
 data class InputCreateResponse(val token: String, val url: String)

@@ -2,6 +2,7 @@ package com.tvplayer.webserver
 
 import com.tvplayer.ai.chat.ChatService
 import com.tvplayer.core.repository.AiProviderRepository
+import com.tvplayer.core.repository.AppSettingsRepository
 import com.tvplayer.core.repository.FileRepository
 import com.tvplayer.core.repository.PlayHistoryRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
@@ -41,6 +42,7 @@ class WebServer @Inject constructor(
     private val syncService: SyncService,
     private val chatService: ChatService,
     private val aiProviderRepository: AiProviderRepository,
+    private val appSettingsRepository: AppSettingsRepository,
     private val webSocketService: WebSocketService,
     private val inputSessionManager: InputSessionManager
 ) {
@@ -187,7 +189,7 @@ class WebServer @Inject constructor(
             }
             
             // API routes (must be before SPA fallback)
-            configureApiRoutes(fileRepository, playHistoryRepository, webDavConfigRepository, syncService, chatService, aiProviderRepository, webSocketService, inputSessionManager, serverPort = { _activePort.value })
+            configureApiRoutes(fileRepository, playHistoryRepository, webDavConfigRepository, syncService, chatService, aiProviderRepository, appSettingsRepository, webSocketService, inputSessionManager, serverPort = { _activePort.value })
             
             // SPA fallback - serve index.html for all other routes
             get("/{path...}") {

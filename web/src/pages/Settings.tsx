@@ -15,6 +15,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   FolderIcon,
+  PlayIcon,
   PlusIcon,
   TrashIcon
 } from '../components/Icons'
@@ -48,6 +49,35 @@ export default function Settings() {
   const [testing, setTesting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [workingId, setWorkingId] = useState<number | null>(null)
+  const [reminderEnabled, setReminderEnabled] = useState(false)
+  const [reminderMinutes, setReminderMinutes] = useState('15')
+  const [reminderSaving, setReminderSaving] = useState(false)
+
+  useEffect(() => {
+    axios.get<{ enabled: boolean; minutes: number }>('/api/config/play-reminder')
+      .then(res => {
+        setReminderEnabled(res.data.enabled)
+        setReminderMinutes(String(res.data.minutes))
+      })
+      .catch(() => toast.error('加载播放提醒设置失败'))
+  }, [])
+
+  const handleSaveReminder = async () => {
+    const minutes = Number(reminderMinutes)
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) {
+      toast.warning('提醒时长需为 1-240 之间的整数分钟')
+      return
+    }
+    setReminderSaving(true)
+    try {
+      await axios.put('/api/config/play-reminder', { enabled: reminderEnabled, minutes })
+      toast.success('播放提醒已保存')
+    } catch {
+      toast.error('保存播放提醒失败')
+    } finally {
+      setReminderSaving(false)
+    }
+  }
 
   const loadConfigs = async () => {
     setLoading(true)
@@ -198,7 +228,7 @@ export default function Settings() {
       <div className="page-header">
         <div className="page-heading-text">
           <h1 className="page-title">设置</h1>
-          <div className="page-subtitle">WebDAV 与 AI 服务配置</div>
+          <div className="page-subtitle">WebDAV、AI 服务与播放提醒配置</div>
         </div>
       </div>
 
@@ -213,6 +243,62 @@ export default function Settings() {
           </span>
           <ChevronRightIcon size={18} className="file-arrow" />
         </button>
+
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <div className="card-title">
+                <PlayIcon size={17} />
+                播放提醒
+              </div>
+              <div className="card-sub">连续播放达到设定时长后自动暂停，电视上显示「休息一下」，按 OK 继续</div>
+            </div>
+          </div>
+          <div className="settings-card-body">
+            <div className="form-stack">
+              <div className="field">
+                <label className="field-label" htmlFor="reminder-enabled">
+                  <input
+                    id="reminder-enabled"
+                    type="checkbox"
+                    checked={reminderEnabled}
+                    onChange={event => setReminderEnabled(event.target.checked)}
+                    style={{ marginRight: 8 }}
+                  />
+                  启用播放提醒
+                </label>
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="reminder-minutes">
+                  提醒时长（分钟）
+                </label>
+                <input
+                  id="reminder-minutes"
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={240}
+                  step={1}
+                  value={reminderMinutes}
+                  disabled={!reminderEnabled}
+                  onChange={event => setReminderMinutes(event.target.value)}
+                  style={{ maxWidth: 200 }}
+                />
+                <span className="field-hint">例如 15 表示每播放 15 分钟自动暂停一次，继续播放后重新计时</span>
+              </div>
+              <div>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => void handleSaveReminder()}
+                  disabled={reminderSaving}
+                >
+                  {reminderSaving && <Spinner size={14} />}
+                  {reminderSaving ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
 
         <section className="card">
           <div className="card-head">

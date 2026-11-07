@@ -35,6 +35,29 @@ class PlayHistoryRepositoryImpl @Inject constructor(
         return playHistoryDao.getByPath(filePath)?.toPlayHistory()
     }
 
+    override suspend fun recordPlayStart(filePath: String, fileName: String) {
+        saveMutex.withLock {
+            val existing = playHistoryDao.getByPath(filePath)
+            val now = System.currentTimeMillis()
+            if (existing != null) {
+                // 只累加次数与时间，保留已有的续播进度
+                playHistoryDao.update(existing.copy(
+                    playCount = existing.playCount + 1,
+                    lastPlayedTime = now
+                ))
+            } else {
+                playHistoryDao.insert(PlayHistoryEntity(
+                    filePath = filePath,
+                    fileName = fileName,
+                    position = 0,
+                    duration = 0,
+                    playCount = 1,
+                    lastPlayedTime = now
+                ))
+            }
+        }
+    }
+
     override suspend fun save(history: PlayHistory) {
         saveMutex.withLock {
             val existing = playHistoryDao.getByPath(history.filePath)
@@ -69,6 +92,7 @@ class PlayHistoryRepositoryImpl @Inject constructor(
         fileName = fileName,
         position = position,
         duration = duration,
+        playCount = playCount,
         lastPlayedTime = lastPlayedTime
     )
 
@@ -78,6 +102,7 @@ class PlayHistoryRepositoryImpl @Inject constructor(
         fileName = fileName,
         position = position,
         duration = duration,
+        playCount = playCount,
         lastPlayedTime = lastPlayedTime
     )
 }

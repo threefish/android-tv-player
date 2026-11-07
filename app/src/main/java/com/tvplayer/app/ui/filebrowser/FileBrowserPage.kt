@@ -52,6 +52,7 @@ fun FileBrowserPage(
     val currentPath by viewModel.currentPath.collectAsState()
     val files by viewModel.files.collectAsState()
     val syncState by viewModel.syncState.collectAsState()
+    val playCounts by viewModel.playCounts.collectAsState()
     val addToHomeResult by viewModel.addToHomeResult.collectAsState()
 
     var contextMenuFile by remember { mutableStateOf<FileInfo?>(null) }
@@ -76,7 +77,7 @@ fun FileBrowserPage(
     LaunchedEffect(initialPath) {
         val path = initialPath ?: "/"
         viewModel.loadFiles(path)
-        viewModel.syncIfStale()
+        viewModel.syncIfEmpty()
     }
 
     LaunchedEffect(currentPath) {
@@ -241,6 +242,7 @@ fun FileBrowserPage(
                 itemsIndexed(files) { index, file ->
                     FileItem(
                         file = file,
+                        playCount = playCounts[file.path] ?: 0,
                         modifier = if (index == focusIndex) Modifier.focusRequester(itemFocusRequester) else Modifier,
                         menuExpanded = contextMenuFile?.path == file.path,
                         onClick = {
@@ -290,10 +292,10 @@ fun FileBrowserPage(
                                 .background(AppColors.surfaceVariant, AppShapes.medium)
                         ) {
                             Text(
-                                if (state.failedCount > 0) {
-                                    "同步完成: ${state.fileCount} 个文件，${state.failedCount} 项失败"
-                                } else {
-                                    "同步完成: ${state.fileCount} 个文件"
+                                buildString {
+                                    append("同步完成: ${state.fileCount} 个文件")
+                                    if (state.removedCount > 0) append("，清理 ${state.removedCount} 项")
+                                    if (state.failedCount > 0) append("，${state.failedCount} 项失败")
                                 },
                                 modifier = Modifier.padding(Spacing.md),
                                 color = if (state.failedCount > 0) AppColors.error else AppColors.primary
@@ -343,6 +345,7 @@ fun FileBrowserPage(
 @Composable
 private fun FileItem(
     file: FileInfo,
+    playCount: Int,
     modifier: Modifier = Modifier,
     menuExpanded: Boolean,
     onClick: () -> Unit,
@@ -402,6 +405,13 @@ private fun FileItem(
                         color = AppColors.listCaption
                     )
                 }
+            }
+            if (!file.isDirectory && playCount > 0) {
+                Text(
+                    text = "播放 $playCount 次",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppColors.listCaption
+                )
             }
         }
 

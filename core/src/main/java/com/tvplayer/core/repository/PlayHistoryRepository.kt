@@ -9,6 +9,8 @@ interface PlayHistoryRepository {
     suspend fun getRecent(limit: Int): List<PlayHistory>
     suspend fun getByPath(filePath: String): PlayHistory?
     suspend fun save(history: PlayHistory)
+    /** 记录一次起播：已存在则次数 +1，不存在则新建；不覆盖已保存的进度 */
+    suspend fun recordPlayStart(filePath: String, fileName: String)
     suspend fun delete(id: Long)
     suspend fun clearAll()
     suspend fun getLatestInFolder(folderPath: String): PlayHistory?

@@ -12,9 +12,11 @@ import androidx.room.RoomDatabase
         ChatMessageEntity::class,
         AiProviderEntity::class,
         PlaylistEntity::class,
-        HomeGridEntity::class
+        HomeGridEntity::class,
+        SeriesPlaylistEntity::class,
+        AppSettingEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -26,4 +28,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiProviderDao(): AiProviderDao
     abstract fun playlistDao(): PlaylistDao
     abstract fun homeGridDao(): HomeGridDao
+    abstract fun seriesPlaylistDao(): SeriesPlaylistDao
+    abstract fun appSettingsDao(): AppSettingsDao
 }

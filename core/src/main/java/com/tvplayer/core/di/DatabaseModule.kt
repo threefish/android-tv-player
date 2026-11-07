@@ -4,12 +4,16 @@ import android.content.Context
 import androidx.room.Room
 import com.tvplayer.core.db.AiProviderDao
 import com.tvplayer.core.db.AppDatabase
+import com.tvplayer.core.db.AppSettingsDao
 import com.tvplayer.core.db.ChatMessageDao
 import com.tvplayer.core.db.ChatSessionDao
 import com.tvplayer.core.db.FileDao
 import com.tvplayer.core.db.HomeGridDao
+import com.tvplayer.core.db.MIGRATION_2_3
+import com.tvplayer.core.db.MIGRATION_3_4
 import com.tvplayer.core.db.PlayHistoryDao
 import com.tvplayer.core.db.PlaylistDao
+import com.tvplayer.core.db.SeriesPlaylistDao
 import com.tvplayer.core.db.WebDavConfigDao
 import dagger.Module
 import dagger.Provides
@@ -29,7 +33,9 @@ object DatabaseModule {
             context,
             AppDatabase::class.java,
             "tvplayer.db"
-        ).fallbackToDestructiveMigration().build()
+        ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+            .fallbackToDestructiveMigration()
+            .build()
     }
 
     @Provides
@@ -70,5 +76,15 @@ object DatabaseModule {
     @Provides
     fun provideHomeGridDao(database: AppDatabase): HomeGridDao {
         return database.homeGridDao()
+    }
+
+    @Provides
+    fun provideSeriesPlaylistDao(database: AppDatabase): SeriesPlaylistDao {
+        return database.seriesPlaylistDao()
+    }
+
+    @Provides
+    fun provideAppSettingsDao(database: AppDatabase): AppSettingsDao {
+        return database.appSettingsDao()
     }
 }

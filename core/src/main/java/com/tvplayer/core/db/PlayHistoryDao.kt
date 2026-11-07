@@ -32,4 +32,8 @@ interface PlayHistoryDao {
 
     @Query("SELECT * FROM play_history WHERE filePath LIKE :folderPrefix || '/%' ORDER BY lastPlayedTime DESC LIMIT 1")
     suspend fun getLatestInFolder(folderPrefix: String): PlayHistoryEntity?
+
+    /** 删除指定路径及其子孙的历史记录，返回删除行数（用精确前缀，避免 LIKE 把 _ % 当通配符） */
+    @Query("DELETE FROM play_history WHERE filePath = :path OR substr(filePath, 1, length(:path) + 1) = :path || '/'")
+    suspend fun deleteByPathPrefix(path: String): Int
 }

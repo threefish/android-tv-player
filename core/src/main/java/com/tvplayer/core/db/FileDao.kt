@@ -76,4 +76,12 @@ interface FileDao {
 
     @Query("DELETE FROM files WHERE path LIKE '%/#recycle' OR path LIKE '%/#recycle/%'")
     suspend fun deleteRecycleBin()
+
+    /** 删除指定路径及其全部子孙条目，返回删除行数（用精确前缀，避免 LIKE 把 _ % 当通配符） */
+    @Query("DELETE FROM files WHERE path = :path OR substr(path, 1, length(:path) + 1) = :path || '/'")
+    suspend fun deleteByPathPrefix(path: String): Int
+
+    /** 目录下全部子孙文件（不含目录本身），精确前缀匹配；媒体类型过滤交给 FileInfo 按扩展名判断 */
+    @Query("SELECT * FROM files WHERE isDeleted = 0 AND isDirectory = 0 AND substr(path, 1, length(:folderPrefix) + 1) = :folderPrefix || '/'")
+    suspend fun getDescendantFiles(folderPrefix: String): List<FileEntity>
 }

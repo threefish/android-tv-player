@@ -6,5 +6,6 @@ data class PlayHistory(
     val fileName: String,
     val position: Long,
     val duration: Long,
+    val playCount: Int = 0,
     val lastPlayedTime: Long = System.currentTimeMillis()
 )

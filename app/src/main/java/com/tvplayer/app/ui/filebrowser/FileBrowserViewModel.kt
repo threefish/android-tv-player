@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.tvplayer.core.model.FileInfo
 import com.tvplayer.core.repository.FileRepository
 import com.tvplayer.core.repository.HomeGridRepository
+import com.tvplayer.core.repository.PlayHistoryRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
 import com.tvplayer.webdav.SyncService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -19,7 +21,8 @@ class FileBrowserViewModel @Inject constructor(
     private val fileRepository: FileRepository,
     private val syncService: SyncService,
     private val webDavConfigRepository: WebDavConfigRepository,
-    private val homeGridRepository: HomeGridRepository
+    private val homeGridRepository: HomeGridRepository,
+    private val playHistoryRepository: PlayHistoryRepository
 ) : ViewModel() {
 
     private val _currentPath = MutableStateFlow("/")
@@ -36,6 +39,21 @@ class FileBrowserViewModel @Inject constructor(
 
     private val _addToHomeResult = MutableStateFlow<String?>(null)
     val addToHomeResult: StateFlow<String?> = _addToHomeResult.asStateFlow()
+
+    /** filePath → 播放次数，供列表行展示 */
+    private val _playCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val playCounts: StateFlow<Map<String, Int>> = _playCounts.asStateFlow()
+
+    init {
+        // 起播计数、同步清理都会改动历史表，用 Flow 保持列表显示同步
+        viewModelScope.launch {
+            playHistoryRepository.getAllFlow().collect { histories ->
+                _playCounts.value = histories
+                    .filter { it.playCount > 0 }
+                    .associate { it.filePath to it.playCount }
+            }
+        }
+    }
 
     /** 返回上级时需要聚焦的目录 path，由页面在列表加载完成后消费 */
     private var pendingFocusPath: String? = null
@@ -86,13 +104,13 @@ class FileBrowserViewModel @Inject constructor(
         }
     }
 
-    /** 距上次同步不足 1 小时就跳过，避免每次进入页面都全量重扫 */
-    fun syncIfStale() {
+    /** 本地还没有任何同步数据时才自动同步一次；已同步过的目录只由同步按钮触发 */
+    fun syncIfEmpty() {
         if (_isSyncing.value) return
         _isSyncing.value = true
         viewModelScope.launch {
             try {
-                if (syncService.syncIfStale() != null) refresh()
+                if (syncService.syncIfEmpty() != null) refresh()
             } catch (e: Exception) {
                 // Error is handled by SyncService state
             } finally {

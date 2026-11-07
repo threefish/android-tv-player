@@ -55,8 +55,9 @@ class WebDavClient(private val config: WebDavConfig) {
             if (!response.isSuccessful) {
                 throw Exception("PROPFIND failed: ${response.code}")
             }
-            response.body?.string()
-        } ?: return emptyList()
+            // 没有响应体不能让调用方误以为该目录是空的，否则同步会误删整棵本地缓存
+            response.body?.string() ?: throw Exception("PROPFIND empty body")
+        }
         return parsePropfindResponse(body, path)
     }
 
@@ -119,6 +120,8 @@ class WebDavClient(private val config: WebDavConfig) {
             }
         } catch (e: Exception) {
             Log.e("WebDavClient", "parsePropfindResponse failed", e)
+            // 解析失败必须抛出：返回空列表会被同步当成「远端目录已空」而误删缓存
+            throw e
         }
         return files
     }

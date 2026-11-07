@@ -20,6 +20,9 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,9 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
@@ -89,6 +94,10 @@ fun VideoPlayerScreen(
     val selectedSubtitleName by viewModel.selectedSubtitleName.collectAsState()
     val isAudio by viewModel.isAudio.collectAsState()
     val finished by viewModel.finished.collectAsState()
+    val loadError by viewModel.loadError.collectAsState()
+    val restReminder by viewModel.restReminder.collectAsState()
+    val playlistEntries by viewModel.playlistEntries.collectAsState()
+    val currentPlaylistIndex by viewModel.currentPlaylistIndex.collectAsState()
 
     var showControls by remember { mutableStateOf(true) }
     var showMenu by remember { mutableStateOf(false) }
@@ -109,6 +118,13 @@ fun VideoPlayerScreen(
     var focusPauseButtonOnPause by remember { mutableStateOf(false) }
     var focusedSubtitleRow by remember { mutableIntStateOf(-1) }
     var finishedBackFocused by remember { mutableStateOf(false) }
+    var interactionTick by remember { mutableIntStateOf(0) }
+    var restMessage by remember { mutableStateOf<String?>(null) }
+    var showPlaylist by remember { mutableStateOf(false) }
+    var focusedPlaylistRow by remember { mutableIntStateOf(-1) }
+    val playlistListState = rememberLazyListState()
+    val playlistItemFocusRequester = remember { FocusRequester() }
+    val drawerItems = remember(playlistEntries) { buildPlaylistDrawerItems(playlistEntries) }
 
     val resumeDialogVisible = showResumeDialog && savedPosition > 10_000
     var resumeContinueFocused by remember { mutableStateOf(false) }
@@ -116,11 +132,43 @@ fun VideoPlayerScreen(
     var resumeStartOverFocused by remember { mutableStateOf(false) }
     val rootFocusRequester = remember { FocusRequester() }
     val menuFirstFocusRequester = remember { FocusRequester() }
+    val menuLastFocusRequester = remember { FocusRequester() }
+    // 菜单首项按上循环聚焦到最后一项「退出播放」
+    val onMenuTopUp: (KeyEvent) -> Boolean = { event ->
+        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+            runCatching { menuLastFocusRequester.requestFocus() }
+            true
+        } else {
+            false
+        }
+    }
+    // 菜单末项按下循环聚焦到第一项
+    val onMenuBottomDown: (KeyEvent) -> Boolean = { event ->
+        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+            runCatching { menuFirstFocusRequester.requestFocus() }
+            true
+        } else {
+            false
+        }
+    }
     val playPauseFocusRequester = remember { FocusRequester() }
     val subtitleDialogFocusRequester = remember { FocusRequester() }
     val resumeFocusRequester = remember { FocusRequester() }
     val resumeStartOverFocusRequester = remember { FocusRequester() }
     val finishedBackFocusRequester = remember { FocusRequester() }
+    val errorBackFocusRequester = remember { FocusRequester() }
+
+    // 目录没有可播放条目时展示错误页，焦点落到返回按钮
+    LaunchedEffect(loadError) {
+        if (loadError == null) return@LaunchedEffect
+        showControls = false
+        delay(400)
+        repeat(20) {
+            withFrameNanos { }
+            if (runCatching { errorBackFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+            delay(80)
+        }
+    }
 
     // 目录播完后收起操作栏，并把焦点交给停止页的返回按钮。
     // 单次请求可能落在节点挂载之前，重试若干帧直到按钮真正获焦
@@ -167,14 +215,40 @@ fun VideoPlayerScreen(
         withFrameNanos { }
         if (showMenu) {
             runCatching { menuFirstFocusRequester.requestFocus() }
-        } else if (!resumeDialogVisible && !showSubtitleDialog) {
+        } else if (!resumeDialogVisible && !showSubtitleDialog && !showPlaylist) {
             runCatching { rootFocusRequester.requestFocus() }
         }
     }
 
-    LaunchedEffect(showControls, finished) {
-        // 停止页展示期间焦点归停止页按钮，不要被根节点抢走
-        if (!showControls && !finished) {
+    // 焦点到达首条目时滚到列表绝对顶部，否则首个组头会被最小滚动留在视口外
+    LaunchedEffect(focusedPlaylistRow) {
+        if (showPlaylist && focusedPlaylistRow == 0) {
+            playlistListState.scrollToItem(0)
+        }
+    }
+
+    // 抽屉打开时滚动到当前集附近并聚焦当前行；关闭后焦点归还画面
+    LaunchedEffect(showPlaylist) {
+        if (showPlaylist) {
+            focusedPlaylistRow = currentPlaylistIndex
+            val adapterIndex = drawerItems.indexOfFirst {
+                it is PlaylistDrawerItem.Entry && it.entry.index == currentPlaylistIndex
+            }.coerceAtLeast(0)
+            playlistListState.scrollToItem((adapterIndex - 4).coerceAtLeast(0))
+            repeat(20) {
+                withFrameNanos { }
+                if (runCatching { playlistItemFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+                delay(80)
+            }
+        } else if (!resumeDialogVisible && !showMenu && !showSubtitleDialog) {
+            withFrameNanos { }
+            runCatching { rootFocusRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(showControls, finished, loadError) {
+        // 停止页/错误页展示期间焦点归页面按钮，不要被根节点抢走
+        if (!showControls && !finished && loadError == null) {
             withFrameNanos { }
             runCatching { rootFocusRequester.requestFocus() }
         }
@@ -182,7 +256,7 @@ fun VideoPlayerScreen(
 
     // 全屏画面本身是焦点目标，方向键无法自动进入底部操作栏，按下键时显式移入焦点
     LaunchedEffect(focusControlsTick) {
-        if (focusControlsTick > 0 && showControls && !showMenu && !showSubtitleDialog) {
+        if (focusControlsTick > 0 && showControls && !showMenu && !showSubtitleDialog && !showPlaylist) {
             withFrameNanos { }
             runCatching { playPauseFocusRequester.requestFocus() }
         }
@@ -190,19 +264,42 @@ fun VideoPlayerScreen(
 
     // OK 键暂停后把焦点落到播放/暂停按钮；必须等状态落定，避免按键抬起被按钮当成点击
     LaunchedEffect(isPlaying, focusPauseButtonOnPause) {
-        if (focusPauseButtonOnPause && !isPlaying && showControls && !showMenu && !showSubtitleDialog) {
+        if (focusPauseButtonOnPause && !isPlaying && showControls && !showMenu && !showSubtitleDialog && !showPlaylist) {
             withFrameNanos { }
             runCatching { playPauseFocusRequester.requestFocus() }
             focusPauseButtonOnPause = false
         }
     }
 
-    // 播放中且焦点停留在画面上时才自动隐藏；操作控件或暂停时保持工具栏
-    LaunchedEffect(showControls, showMenu, showSubtitleDialog, isPlaying, rootFocused, seekIndicator, resumeDialogVisible) {
-        if (showControls && !showMenu && !showSubtitleDialog && isPlaying && rootFocused &&
-            seekIndicator == null && !resumeDialogVisible
+    // 无遥控操作 5 秒后隐藏工具栏（播放与暂停都计时）；弹窗/抽屉/停止页/错误页/休息屏打开时不隐藏
+    LaunchedEffect(showControls, interactionTick, showMenu, showSubtitleDialog, showPlaylist, resumeDialogVisible, finished, loadError, restMessage) {
+        if (showControls && !showMenu && !showSubtitleDialog && !showPlaylist && !resumeDialogVisible &&
+            !finished && loadError == null && restMessage == null
         ) {
-            delay(4000)
+            delay(5000)
+            showControls = false
+        }
+    }
+
+    // 播放提醒触发：自动暂停已由 ViewModel 完成，这里只展示休息屏
+    LaunchedEffect(restReminder) {
+        if (restReminder) {
+            restMessage = "休息一下"
+            showControls = false
+            showPlaylist = false
+            showMenu = false
+            viewModel.acknowledgeRestReminder()
+        }
+    }
+
+    // 暂停 30 秒后进入休息屏；恢复播放或打开弹窗都会取消计时
+    LaunchedEffect(isPlaying, playbackState, isReady, finished, resumeDialogVisible, loadError, restMessage, showMenu, showSubtitleDialog, showPlaylist) {
+        if (isReady && !isPlaying && playbackState is PlayerService.PlaybackState.Ready &&
+            !finished && !resumeDialogVisible && loadError == null && restMessage == null &&
+            !showMenu && !showSubtitleDialog && !showPlaylist
+        ) {
+            delay(30_000)
+            restMessage = "休息中"
             showControls = false
         }
     }
@@ -212,7 +309,7 @@ fun VideoPlayerScreen(
             focusedSubtitleRow = -1
             withFrameNanos { }
             runCatching { subtitleDialogFocusRequester.requestFocus() }
-        } else if (!resumeDialogVisible && !showMenu) {
+        } else if (!resumeDialogVisible && !showMenu && !showPlaylist) {
             withFrameNanos { }
             runCatching { rootFocusRequester.requestFocus() }
         }
@@ -259,10 +356,12 @@ fun VideoPlayerScreen(
 
     BackHandler {
         when {
-            // 停止页上返回键一次退出，不再要求二次确认
+            // 错误页与停止页上返回键一次退出，不再要求二次确认
+            loadError != null -> onBack()
             finished -> onBack()
             showSubtitleDialog -> showSubtitleDialog = false
             resumeDialogVisible -> showResumeDialog = false
+            showPlaylist -> showPlaylist = false
             showMenu -> showMenu = false
             else -> requestExit()
         }
@@ -276,16 +375,40 @@ fun VideoPlayerScreen(
             .background(Color.Black)
             .focusRequester(rootFocusRequester)
             .onFocusChanged { rootFocused = it.isFocused }
+            // 预览阶段先拿到所有按键（含焦点在控件按钮上时），用于刷新无操作计时
+            .onPreviewKeyEvent {
+                interactionTick++
+                false
+            }
             .onKeyEvent { event ->
                 val isDown = event.type == KeyEventType.KeyDown
                 val isUp = event.type == KeyEventType.KeyUp
                 when {
+                    restMessage != null -> {
+                        if (isDown) {
+                            when (event.key) {
+                                Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                    restMessage = null
+                                    viewModel.resume()
+                                    showControls = true
+                                }
+                                Key.Back -> onBack()
+                            }
+                        }
+                        true
+                    }
+                    loadError != null -> {
+                        if (isDown && event.key == Key.Back) onBack()
+                        true
+                    }
                     event.key == Key.Menu -> {
-                        if (isDown && !menuKeyHeld && !finished &&
-                            !resumeDialogVisible && !showSubtitleDialog
-                        ) {
-                            showMenu = !showMenu
-                            if (showMenu) showControls = true
+                        if (isDown && !menuKeyHeld) {
+                            if (showPlaylist) {
+                                showPlaylist = false
+                            } else if (!finished && !resumeDialogVisible && !showSubtitleDialog) {
+                                showMenu = !showMenu
+                                if (showMenu) showControls = true
+                            }
                         }
                         if (isDown) menuKeyHeld = true else if (isUp) menuKeyHeld = false
                         true
@@ -299,6 +422,7 @@ fun VideoPlayerScreen(
                                 when {
                                     showSubtitleDialog -> showSubtitleDialog = false
                                     resumeDialogVisible -> showResumeDialog = false
+                                    showPlaylist -> showPlaylist = false
                                     showMenu -> showMenu = false
                                     // 焦点在操作栏内时先收起操作栏，回到画面
                                     !rootFocused -> showControls = false
@@ -312,14 +436,14 @@ fun VideoPlayerScreen(
                     !rootFocused -> false
                     event.key == Key.DirectionDown -> {
                         // 停止页展示时不再唤出操作栏，按键留给停止页按钮
-                        if (isDown && !finished && !showMenu && !resumeDialogVisible && !showSubtitleDialog) {
+                        if (isDown && !finished && !showMenu && !resumeDialogVisible && !showSubtitleDialog && !showPlaylist) {
                             showControls = true
                             focusControlsTick++
                         }
                         true
                     }
                     event.key == Key.DirectionLeft || event.key == Key.DirectionRight -> {
-                        if (isDown && !finished && !showMenu && !resumeDialogVisible && !showSubtitleDialog) {
+                        if (isDown && !finished && !showMenu && !resumeDialogVisible && !showSubtitleDialog && !showPlaylist) {
                             val step = if (seekRepeat > 2) 60_000L else 10_000L
                             seekRepeat++
                             seekBy(if (event.key == Key.DirectionRight) step else -step)
@@ -329,7 +453,7 @@ fun VideoPlayerScreen(
                     }
                     event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter -> {
                         if (isDown && !centerKeyHeld && !finished &&
-                            !showMenu && !resumeDialogVisible && !showSubtitleDialog
+                            !showMenu && !resumeDialogVisible && !showSubtitleDialog && !showPlaylist
                         ) {
                             if (isPlaying) {
                                 viewModel.pause()
@@ -737,17 +861,23 @@ fun VideoPlayerScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                     )
                     HorizontalDivider(color = Color.Gray)
-                    MenuItem(
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        label = "退出播放",
-                        onClick = { showMenu = false; onBack() },
-                        focusRequester = menuFirstFocusRequester
-                    )
+                    if (playlistEntries.size > 1) {
+                        MenuItem(
+                            icon = Icons.Default.VideoLibrary,
+                            label = "播放列表",
+                            trailingText = "${currentPlaylistIndex + 1}/${playlistEntries.size}",
+                            onClick = { showMenu = false; showPlaylist = true },
+                            focusRequester = menuFirstFocusRequester,
+                            onKeyEvent = onMenuTopUp
+                        )
+                    }
                     MenuItem(
                         icon = Icons.Default.SkipPrevious,
                         label = "上一个",
                         trailingText = previousName,
-                        onClick = { viewModel.playPrevious(); showMenu = false }
+                        onClick = { viewModel.playPrevious(); showMenu = false },
+                        focusRequester = if (playlistEntries.size <= 1) menuFirstFocusRequester else null,
+                        onKeyEvent = if (playlistEntries.size <= 1) onMenuTopUp else null
                     )
                     MenuItem(
                         icon = Icons.Default.Replay,
@@ -797,6 +927,83 @@ fun VideoPlayerScreen(
                             label = "字幕",
                             onClick = { showSubtitleDialog = true; showMenu = false }
                         )
+                    }
+                    HorizontalDivider(color = Color.Gray)
+                    MenuItem(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        label = "退出播放",
+                        onClick = { showMenu = false; onBack() },
+                        focusRequester = menuLastFocusRequester,
+                        onKeyEvent = onMenuBottomDown
+                    )
+                }
+            }
+        }
+
+        // 播放列表抽屉：右侧滑出，左右键与边界上下键在抽屉内消费，防止焦点逃逸到底层控件
+        if (showPlaylist) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(22f)
+                    .background(Color(0x99000000))
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .onKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                        when (event.key) {
+                            Key.DirectionLeft, Key.DirectionRight -> true
+                            Key.DirectionUp -> focusedPlaylistRow <= 0
+                            Key.DirectionDown -> focusedPlaylistRow >= playlistEntries.size - 1
+                            else -> false
+                        }
+                    }
+            ) {
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .width(440.dp),
+                    colors = CardDefaults.cardColors(containerColor = AppColors.playerScrim),
+                    shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "播放列表",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        Text(
+                            text = "${currentPlaylistIndex + 1} / ${playlistEntries.size}",
+                            color = Color(0xFFAAAAAA),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LazyColumn(
+                            state = playlistListState,
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusGroup()
+                        ) {
+                            itemsIndexed(drawerItems, key = { index, _ -> index }) { _, item ->
+                                when (item) {
+                                    is PlaylistDrawerItem.Header -> PlaylistGroupHeader(
+                                        label = item.label,
+                                        count = item.count
+                                    )
+                                    is PlaylistDrawerItem.Entry -> PlaylistRow(
+                                        entry = item.entry,
+                                        isCurrent = item.entry.index == currentPlaylistIndex,
+                                        focusRequester = if (item.entry.index == currentPlaylistIndex) playlistItemFocusRequester else null,
+                                        onFocused = { focusedPlaylistRow = item.entry.index },
+                                        onClick = {
+                                            viewModel.playAt(item.entry.index)
+                                            showPlaylist = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -857,6 +1064,34 @@ fun VideoPlayerScreen(
             }
         }
 
+        // 休息屏：暂停 30 秒或播放提醒触发时全屏黑底，OK 继续播放
+        if (restMessage != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(25f)
+                    .background(Color.Black)
+                    .pointerInput(Unit) { detectTapGestures { } },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = restMessage ?: "",
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineLarge
+                    )
+                    Text(
+                        text = "按 OK 键继续播放",
+                        color = Color(0xFF999999),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+
         // 目录全部播完后的停止页
         if (finished) {
             Box(
@@ -900,6 +1135,48 @@ fun VideoPlayerScreen(
                                 primary = true,
                                 focusRequester = finishedBackFocusRequester,
                                 onFocusChange = { finishedBackFocused = it },
+                                onClick = onBack
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 目录没有可播放条目时的错误页
+        if (loadError != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(30f)
+                    .background(Color(0xCC000000))
+                    .pointerInput(Unit) { detectTapGestures { } },
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier.width(560.dp),
+                    colors = CardDefaults.cardColors(containerColor = AppColors.playerScrim),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        Text(
+                            text = "无法播放",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                        Text(
+                            text = loadError ?: "",
+                            color = Color(0xFFCCCCCC),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Row(modifier = Modifier.align(Alignment.End)) {
+                            ResumeDialogButton(
+                                text = "返回",
+                                primary = true,
+                                focusRequester = errorBackFocusRequester,
                                 onClick = onBack
                             )
                         }
@@ -1344,13 +1621,61 @@ private fun AudioBackdrop(title: String) {
     }
 }
 
+/** 抽屉列表项：多目录系列插入组头，单目录不显示组头 */
+private sealed interface PlaylistDrawerItem {
+    data class Header(val label: String, val count: Int) : PlaylistDrawerItem
+    data class Entry(val entry: PlaylistEntry) : PlaylistDrawerItem
+}
+
+private fun buildPlaylistDrawerItems(entries: List<PlaylistEntry>): List<PlaylistDrawerItem> {
+    // groupBy 保持插入顺序，条目本身按路径排序，同目录条目自然连续
+    val groups = entries.groupBy { it.folderPath }
+    return buildList {
+        groups.values.forEach { group ->
+            if (groups.size > 1) add(PlaylistDrawerItem.Header(group.first().folderLabel, group.size))
+            group.forEach { add(PlaylistDrawerItem.Entry(it)) }
+        }
+    }
+}
+
 @Composable
-private fun MenuItem(
-    icon: ImageVector,
-    label: String,
-    trailingText: String = "",
-    onClick: () -> Unit,
-    focusRequester: FocusRequester? = null
+private fun PlaylistGroupHeader(label: String, count: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Folder,
+            contentDescription = null,
+            tint = Color(0xFF999999),
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            text = label,
+            color = Color(0xFFBBBBBB),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = "${count} 个",
+            color = Color(0xFF888888),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun PlaylistRow(
+    entry: PlaylistEntry,
+    isCurrent: Boolean,
+    focusRequester: FocusRequester?,
+    onFocused: () -> Unit,
+    onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
@@ -1364,6 +1689,63 @@ private fun MenuItem(
             .clip(RoundedCornerShape(8.dp))
             .background(if (focused) AppColors.onSurface else Color.Transparent)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { if (it.isFocused) onFocused() }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = "${entry.index + 1}",
+            color = secondaryColor,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.width(32.dp)
+        )
+        Text(
+            text = entry.name,
+            color = contentColor,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (isCurrent) {
+            Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = "播放中",
+                tint = if (focused) Color(0xFF1C2026) else Color(0xFF2196F3),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MenuItem(
+    icon: ImageVector,
+    label: String,
+    trailingText: String = "",
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+    onKeyEvent: ((KeyEvent) -> Boolean)? = null
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
+    val contentColor = if (focused) Color(0xFF1C2026) else Color.White
+    val secondaryColor = if (focused) Color(0xCC1C2026) else Color(0xAAFFFFFF)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) AppColors.onSurface else Color.Transparent)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .then(if (onKeyEvent != null) Modifier.onKeyEvent(onKeyEvent) else Modifier)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,

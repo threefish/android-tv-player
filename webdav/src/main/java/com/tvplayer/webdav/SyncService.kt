@@ -3,6 +3,9 @@ package com.tvplayer.webdav
 import android.util.Log
 import com.tvplayer.core.db.FileDao
 import com.tvplayer.core.db.FileEntity
+import com.tvplayer.core.db.HomeGridDao
+import com.tvplayer.core.db.PlayHistoryDao
+import com.tvplayer.core.db.SeriesPlaylistDao
 import com.tvplayer.core.db.WebDavConfigDao
 import com.tvplayer.core.model.FileInfo
 import com.tvplayer.core.model.WebDavConfig
@@ -19,7 +22,10 @@ import javax.inject.Singleton
 @Singleton
 class SyncService @Inject constructor(
     private val webDavConfigDao: WebDavConfigDao,
-    private val fileDao: FileDao
+    private val fileDao: FileDao,
+    private val playHistoryDao: PlayHistoryDao,
+    private val homeGridDao: HomeGridDao,
+    private val seriesPlaylistDao: SeriesPlaylistDao
 ) {
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
@@ -34,7 +40,8 @@ class SyncService @Inject constructor(
         data class Completed(
             val fileCount: Int,
             val duration: Long,
-            val failedCount: Int = 0
+            val failedCount: Int = 0,
+            val removedCount: Int = 0
         ) : SyncState()
     }
 
@@ -45,16 +52,14 @@ class SyncService @Inject constructor(
     }
 
     /**
-     * 距上次成功同步不足 [maxAgeMs] 且库里已有数据时直接跳过，返回 null。
-     * 用于进入文件浏览页时的自动同步，避免每次都全量重扫。
+     * 只在本地还没有任何同步数据（首次使用）时自动同步一次。
+     * 已经同步过的目录不再主动同步，只能由用户点击同步按钮触发全量同步。
      */
-    suspend fun syncIfStale(maxAgeMs: Long = DEFAULT_SYNC_INTERVAL_MS): Result<Int>? = syncMutex.withLock {
+    suspend fun syncIfEmpty(): Result<Int>? = syncMutex.withLock {
         withContext(Dispatchers.IO) {
-            val entity = webDavConfigDao.getActiveConfig() ?: return@withContext null
-            val lastSync = entity.lastSyncTime ?: 0L
-            val fresh = fileDao.getRoot() != null &&
-                System.currentTimeMillis() - lastSync < maxAgeMs
-            if (fresh) null else runSync()
+            if (fileDao.getRoot() != null) return@withContext null
+            if (webDavConfigDao.getActiveConfig() == null) return@withContext null
+            runSync()
         }
     }
 
@@ -87,15 +92,30 @@ class SyncService @Inject constructor(
                 stats = stats
             )
 
+            // 绑定的目录被远端删除后，首页卡片一并清理
+            val removedCards = runCatching { homeGridDao.deleteMissingFolders() }.getOrDefault(0)
+            if (removedCards > 0) {
+                Log.d("SyncService", "清理失效的首页卡片 $removedCards 个")
+            }
+
+            // 同步可能增删条目，系列播放列表缓存整体失效，下次继续播放时重建
+            runCatching { seriesPlaylistDao.clearAll() }
+
             val syncTime = System.currentTimeMillis()
             webDavConfigDao.updateLastSyncTime(config.id, syncTime)
             _lastSyncTime.value = syncTime
 
             val duration = System.currentTimeMillis() - startTime
-            _syncState.value = SyncState.Completed(stats.entryCount, duration, stats.failedCount)
+            _syncState.value = SyncState.Completed(
+                stats.entryCount,
+                duration,
+                stats.failedCount,
+                stats.removedCount
+            )
             Log.d(
                 "SyncService",
-                "Sync completed: ${stats.entryCount} entries in ${duration}ms, failed=${stats.failedCount}"
+                "Sync completed: ${stats.entryCount} entries in ${duration}ms, " +
+                    "removed=${stats.removedCount}, failed=${stats.failedCount}"
             )
 
             Result.success(stats.entryCount)
@@ -216,6 +236,25 @@ class SyncService @Inject constructor(
             }
         }
 
+        // 远端已不存在的条目要连同本地缓存一起清掉（目录会带下整棵子树），
+        // 否则列表里残留的条目点开会 404。只在本层列举成功时才做这个比对。
+        val remotePaths = items.asSequence()
+            .filter { it.path != path }
+            .filterNot { it.name.equals(RECYCLE_DIR_NAME, ignoreCase = true) }
+            .map { it.path }
+            .toSet()
+        for (stale in localChildren.values.filterNot { it.path in remotePaths }) {
+            try {
+                val removedRows = fileDao.deleteByPathPrefix(stale.path)
+                playHistoryDao.deleteByPathPrefix(stale.path)
+                stats.removedCount += removedRows
+                Log.d("SyncService", "清理远端已删除的条目 ${stale.path}（$removedRows 行）")
+            } catch (e: Exception) {
+                stats.failedCount++
+                Log.e("SyncService", "清理条目 ${stale.path} 失败", e)
+            }
+        }
+
         // 本层已经保存，再进入下一层；单目录异常只影响它自己的子树
         for ((dirPath, dirId) in subDirectories) {
             try {
@@ -230,10 +269,10 @@ class SyncService @Inject constructor(
     private class SyncStats {
         var entryCount = 0
         var failedCount = 0
+        var removedCount = 0
     }
 
     private companion object {
-        const val DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000L
         const val RECYCLE_DIR_NAME = "#recycle"
     }
 
