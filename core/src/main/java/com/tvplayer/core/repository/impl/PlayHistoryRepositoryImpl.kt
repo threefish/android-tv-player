@@ -73,6 +73,42 @@ class PlayHistoryRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun savePlaybackSettings(
+        filePath: String,
+        fileName: String,
+        volume: Float?,
+        resizeMode: Int?,
+        playbackSpeed: Float?,
+        subtitleSize: Float?
+    ) {
+        if (volume == null && resizeMode == null && playbackSpeed == null && subtitleSize == null) return
+        saveMutex.withLock {
+            val existing = playHistoryDao.getByPath(filePath)
+            if (existing != null) {
+                playHistoryDao.update(existing.copy(
+                    volume = volume ?: existing.volume,
+                    // 只有真正写入过音量才视为“调整过”，旧版本增益值不参与系统音量恢复
+                    volumeSet = existing.volumeSet || volume != null,
+                    resizeMode = resizeMode ?: existing.resizeMode,
+                    playbackSpeed = playbackSpeed ?: existing.playbackSpeed,
+                    subtitleSize = subtitleSize ?: existing.subtitleSize
+                ))
+            } else {
+                playHistoryDao.insert(PlayHistoryEntity(
+                    filePath = filePath,
+                    fileName = fileName,
+                    position = 0,
+                    duration = 0,
+                    volume = volume ?: 1.0f,
+                    volumeSet = volume != null,
+                    resizeMode = resizeMode ?: 0,
+                    playbackSpeed = playbackSpeed,
+                    subtitleSize = subtitleSize
+                ))
+            }
+        }
+    }
+
     override suspend fun delete(id: Long) {
         playHistoryDao.delete(id)
     }
@@ -93,7 +129,12 @@ class PlayHistoryRepositoryImpl @Inject constructor(
         position = position,
         duration = duration,
         playCount = playCount,
-        lastPlayedTime = lastPlayedTime
+        lastPlayedTime = lastPlayedTime,
+        volume = volume,
+        volumeSet = volumeSet,
+        resizeMode = resizeMode,
+        playbackSpeed = playbackSpeed,
+        subtitleSize = subtitleSize
     )
 
     private fun PlayHistory.toEntity() = PlayHistoryEntity(
@@ -103,6 +144,11 @@ class PlayHistoryRepositoryImpl @Inject constructor(
         position = position,
         duration = duration,
         playCount = playCount,
-        lastPlayedTime = lastPlayedTime
+        lastPlayedTime = lastPlayedTime,
+        volume = volume,
+        volumeSet = volumeSet,
+        resizeMode = resizeMode,
+        playbackSpeed = playbackSpeed,
+        subtitleSize = subtitleSize
     )
 }

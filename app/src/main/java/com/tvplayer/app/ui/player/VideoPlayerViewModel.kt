@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -89,6 +90,10 @@ class VideoPlayerViewModel @Inject constructor(
 
     // 退出时 ViewModel scope 已取消，最后一次历史写入需要独立 scope
     private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // 全局默认设置：视频没有单独保存过设置时使用
+    private var defaultPlaybackSettings = PlaybackSettings()
+    private var volumeSaveJob: Job? = null
 
     private val _subtitles = MutableStateFlow<List<SubtitleInfo>>(emptyList())
     val subtitles: StateFlow<List<SubtitleInfo>> = _subtitles.asStateFlow()
@@ -272,6 +277,7 @@ class VideoPlayerViewModel @Inject constructor(
     val playbackSpeed = playerService.playbackSpeed
     val resizeMode = playerService.resizeMode
     val subtitleSize = playerService.subtitleSize
+    val volume = playerService.volume
     val engine = playerService.engine
     val selectedSubtitleName = playerService.selectedSubtitleName
 
@@ -294,11 +300,11 @@ class VideoPlayerViewModel @Inject constructor(
         }
         // 历史必须在开播前加载完，否则会先用 0 开播、弹窗随后才出现
         viewModelScope.launch {
-            val settings = appSettingsRepository.getPlaybackSettings()
-            _dualSubtitleEnabled.value = settings.dualSubtitle
-            _seekStepSeconds.value = settings.seekStepSeconds
-            playerService.setPlaybackSpeed(settings.playbackSpeed)
-            playerService.setSubtitleSize(settings.subtitleSize)
+            defaultPlaybackSettings = appSettingsRepository.getPlaybackSettings()
+            _dualSubtitleEnabled.value = defaultPlaybackSettings.dualSubtitle
+            _seekStepSeconds.value = defaultPlaybackSettings.seekStepSeconds
+            playerService.setPlaybackSpeed(defaultPlaybackSettings.playbackSpeed)
+            playerService.setSubtitleSize(defaultPlaybackSettings.subtitleSize)
             restoreRestDeadline()
             if (folderPath != null) {
                 if (loadFolderPlaylist()) _isReady.value = true
@@ -314,6 +320,22 @@ class VideoPlayerViewModel @Inject constructor(
             playerService.playbackState.collect { state ->
                 if (state is PlayerService.PlaybackState.Ended) {
                     onPlaybackEnded()
+                }
+            }
+        }
+        // 遥控器音量键调整的是系统媒体音量，同样要记到当前视频上
+        viewModelScope.launch {
+            playerService.volume.drop(1).collect { value ->
+                val path = getCurrentFilePath()
+                if (path.isBlank()) return@collect
+                volumeSaveJob?.cancel()
+                volumeSaveJob = historyScope.launch {
+                    delay(400)
+                    playHistoryRepository.savePlaybackSettings(
+                        filePath = path,
+                        fileName = path.substringAfterLast('/'),
+                        volume = value
+                    )
                 }
             }
         }
@@ -455,11 +477,12 @@ class VideoPlayerViewModel @Inject constructor(
             _isAudio.value = isAudio
             val subtitles = if (isAudio) emptyList() else subtitleFinder.findSubtitles(path)
             _subtitles.value = subtitles
+            Log.d("VideoPlayerVM", "startPlayback path=$path position=$position isAudio=$isAudio subtitles=${subtitles.size}")
+            applyVideoSettings(path)
             if (!initialPlayRecorded) {
                 initialPlayRecorded = true
                 recordPlayStart(path)
             }
-            Log.d("VideoPlayerVM", "startPlayback path=$path position=$position isAudio=$isAudio subtitles=${subtitles.size}")
             playerService.playVideo(
                 videoUrl = buildVideoUrl(config, path),
                 requestHeaders = authHeaders(config),
@@ -491,6 +514,7 @@ class VideoPlayerViewModel @Inject constructor(
                 isAuto = isAuto,
                 isAudio = file.isAudio
             )
+            applyVideoSettings(file.path)
             recordPlayStart(file.path)
             playerService.playVideo(
                 videoUrl = buildVideoUrl(config, file.path),
@@ -562,14 +586,17 @@ class VideoPlayerViewModel @Inject constructor(
 
     fun cyclePlaybackSpeed() {
         playerService.cyclePlaybackSpeed()
+        persistVideoSettings(playbackSpeed = playerService.playbackSpeed.value)
     }
 
     fun cycleResizeMode() {
         playerService.cycleResizeMode()
+        persistVideoSettings(resizeMode = playerService.resizeMode.value)
     }
 
     fun cycleSubtitleSize() {
         playerService.cycleSubtitleSize()
+        persistVideoSettings(subtitleSize = playerService.subtitleSize.value)
     }
 
     fun seekTo(position: Long) {
@@ -695,6 +722,47 @@ class VideoPlayerViewModel @Inject constructor(
 
     private fun getCurrentFilePath(): String {
         return if (currentIndex in playlist.indices) playlist[currentIndex].path else videoPath
+    }
+
+    /** 起播/切集时应用该视频单独保存过的设置，未保存过的项沿用全局默认 */
+    private suspend fun applyVideoSettings(path: String) {
+        val history = playHistoryRepository.getByPath(path)
+        // 旧版本存的音量是播放器增益；没真正调过系统音量的视频保持当前音量
+        val hasVolume = history?.volumeSet == true
+        val volume = if (hasVolume) history!!.volume else playerService.volume.value
+        playerService.setVolume(volume)
+        playerService.setResizeMode(history?.resizeMode ?: 0)
+        playerService.setPlaybackSpeed(history?.playbackSpeed ?: defaultPlaybackSettings.playbackSpeed)
+        playerService.setSubtitleSize(history?.subtitleSize ?: defaultPlaybackSettings.subtitleSize)
+        if (!hasVolume) {
+            // 把当前系统音量记成该视频的起始音量，下次打开恢复
+            playHistoryRepository.savePlaybackSettings(
+                filePath = path,
+                fileName = path.substringAfterLast('/'),
+                volume = volume
+            )
+        }
+    }
+
+    /** 只落库本次实际调整过的项，未调整的继续保持“跟随全局默认” */
+    private fun persistVideoSettings(
+        volume: Float? = null,
+        resizeMode: Int? = null,
+        playbackSpeed: Float? = null,
+        subtitleSize: Float? = null
+    ) {
+        val path = getCurrentFilePath()
+        if (path.isBlank()) return
+        historyScope.launch {
+            playHistoryRepository.savePlaybackSettings(
+                filePath = path,
+                fileName = path.substringAfterLast('/'),
+                volume = volume,
+                resizeMode = resizeMode,
+                playbackSpeed = playbackSpeed,
+                subtitleSize = subtitleSize
+            )
+        }
     }
 
     /** 返回列表时用于定位最后播放的条目 */

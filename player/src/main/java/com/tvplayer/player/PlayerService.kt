@@ -2,8 +2,13 @@
 
 package com.tvplayer.player
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import androidx.media3.common.C
@@ -33,6 +38,7 @@ import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.util.VLCVideoLayout
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.roundToInt
 
 enum class PlayerEngine { EXOPLAYER, VLC }
 
@@ -52,7 +58,29 @@ class PlayerService @Inject constructor(
     private var vlcAudioTracks: Array<MediaPlayer.TrackDescription> = emptyArray()
     private var vlcSpuTracks: Array<MediaPlayer.TrackDescription> = emptyArray()
 
-    private var volumeLevel = 1.0f
+    private val _volume = MutableStateFlow(0f)
+    /** 0~1 的系统媒体音量占比，与遥控器音量键操作的同一路音量 */
+    val volume: StateFlow<Float> = _volume.asStateFlow()
+
+    private val audioManager =
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, -1) == AudioManager.STREAM_MUSIC) {
+                _volume.value = readSystemVolume()
+            }
+        }
+    }
+
+    init {
+        _volume.value = readSystemVolume()
+        val filter = IntentFilter(VOLUME_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(volumeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(volumeReceiver, filter)
+        }
+    }
     private var currentVideoUrl = ""
     private var currentRequestHeaders: Map<String, String> = emptyMap()
     private var vlcFallbackAttempted = false
@@ -126,7 +154,6 @@ class PlayerService @Inject constructor(
                 .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingFactory))
                 .build()
             player?.repeatMode = if (_isSingleLoop.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            player?.volume = volumeLevel
 
             player?.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
@@ -262,7 +289,6 @@ class PlayerService @Inject constructor(
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()
             exoPlayer.seekTo(startPosition)
-            exoPlayer.volume = volumeLevel
             // 播放器实例跨视频复用，起播时显式恢复用户设置的倍速
             exoPlayer.setPlaybackSpeed(_playbackSpeed.value)
             exoPlayer.playWhenReady = true
@@ -307,7 +333,6 @@ class PlayerService @Inject constructor(
         }
         mp.setMedia(media)
         media.release()
-        mp.volume = (volumeLevel * 100).toInt()
         mp.rate = _playbackSpeed.value
         mp.play()
         if (startPosition > 0) mp.time = startPosition
@@ -438,10 +463,18 @@ class PlayerService @Inject constructor(
         if (isVlc) vlcPlayer?.play() else player?.play()
     }
 
+    /** 直接调整系统媒体音量，遥控器音量键与状态栏看到的是同一个值 */
     fun setVolume(volume: Float) {
-        volumeLevel = volume.coerceIn(0f, 1f)
-        player?.volume = volumeLevel
-        vlcPlayer?.volume = (volumeLevel * 100).toInt()
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val index = (volume.coerceIn(0f, 1f) * max).roundToInt()
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+        _volume.value = readSystemVolume()
+    }
+
+    private fun readSystemVolume(): Float {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        return (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max)
+            .coerceIn(0f, 1f)
     }
 
     fun seekTo(position: Long) {
@@ -679,11 +712,16 @@ class PlayerService @Inject constructor(
 
     private val resizeModeSteps = listOf(0, 1, 2) // FIT, FILL, ZOOM
 
+    fun setResizeMode(mode: Int) {
+        if (mode !in resizeModeSteps) return
+        _resizeMode.value = mode
+        if (isVlc) vlcPlayer?.setVideoScale(vlcScaleType())
+    }
+
     fun cycleResizeMode() {
         val currentIdx = resizeModeSteps.indexOf(_resizeMode.value)
         val nextIdx = (currentIdx + 1) % resizeModeSteps.size
-        _resizeMode.value = resizeModeSteps[nextIdx]
-        if (isVlc) vlcPlayer?.setVideoScale(vlcScaleType())
+        setResizeMode(resizeModeSteps[nextIdx])
     }
 
     private fun vlcScaleType(): MediaPlayer.ScaleType = when (_resizeMode.value) {
@@ -782,6 +820,10 @@ class PlayerService @Inject constructor(
     }
 
     companion object {
+        // 系统音量变化广播（AudioManager 里的同名常量是 @hide）
+        private const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
+        private const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
+
         // libVLC slave 优先级：0 最低、4 最高
         private const val SUBTITLE_SLAVE_PRIORITY = 4
 

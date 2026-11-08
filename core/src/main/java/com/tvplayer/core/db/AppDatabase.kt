@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         AppSettingEntity::class,
         DailyWatchTimeEntity::class
     ],
-    version = 6,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

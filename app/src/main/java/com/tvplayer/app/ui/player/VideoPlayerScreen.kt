@@ -5,7 +5,6 @@ import android.util.TypedValue
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -70,6 +69,7 @@ import com.tvplayer.player.PlayerEngine
 import com.tvplayer.player.PlayerService
 import com.tvplayer.player.SubtitleParser
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicLong
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
@@ -81,10 +81,7 @@ fun VideoPlayerScreen(
     val savedPosition by viewModel.savedPosition.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
-    val currentPosition by viewModel.currentPosition.collectAsState()
-    val duration by viewModel.duration.collectAsState()
     val currentTitle by viewModel.currentTitle.collectAsState()
-    val bufferSpeed by viewModel.bufferSpeed.collectAsState()
     val isSingleLoop by viewModel.isSingleLoop.collectAsState()
     val previousName by viewModel.previousName.collectAsState()
     val nextName by viewModel.nextName.collectAsState()
@@ -114,7 +111,6 @@ fun VideoPlayerScreen(
     var seekIndicatorTick by remember { mutableIntStateOf(0) }
     var exitArmed by remember { mutableStateOf(false) }
     var showExitHint by remember { mutableStateOf(false) }
-    var volume by remember { mutableStateOf(1.0f) }
     var rootFocused by remember { mutableStateOf(false) }
     var menuKeyHeld by remember { mutableStateOf(false) }
     var centerKeyHeld by remember { mutableStateOf(false) }
@@ -127,7 +123,8 @@ fun VideoPlayerScreen(
     // 0=主字幕，1=副字幕
     var subtitleMode by remember { mutableIntStateOf(0) }
     var finishedBackFocused by remember { mutableStateOf(false) }
-    var interactionTick by remember { mutableIntStateOf(0) }
+    // 普通对象记录最近按键时间：每次按键都写 Compose 状态会让整页重组，工具条导航明显卡顿
+    val lastInteractionAt = remember { AtomicLong(0L) }
     var pauseRest by remember { mutableStateOf(false) }
     // 休息屏文案：播放提醒休息优先于暂停 30 秒休息
     val restMessage = when {
@@ -226,6 +223,13 @@ fun VideoPlayerScreen(
         if (isReady) viewModel.startPlayback()
     }
 
+    // 续播弹窗 5 秒无操作就自动继续播放；焦点移到「从头播放」说明用户在做选择，不再自动代答
+    LaunchedEffect(resumeDialogVisible, resumeStartOverFocused) {
+        if (!resumeDialogVisible || resumeStartOverFocused) return@LaunchedEffect
+        delay(5_000)
+        showResumeDialog = false
+    }
+
     LaunchedEffect(showMenu) {
         withFrameNanos { }
         if (showMenu) {
@@ -287,12 +291,18 @@ fun VideoPlayerScreen(
     }
 
     // 无遥控操作 5 秒后隐藏工具栏（播放与暂停都计时）；弹窗/抽屉/停止页/错误页/休息屏打开时不隐藏
-    LaunchedEffect(showControls, interactionTick, showMenu, showSubtitleDialog, showPlaylist, resumeDialogVisible, finished, loadError, restMessage) {
+    LaunchedEffect(showControls, showMenu, showSubtitleDialog, showPlaylist, resumeDialogVisible, finished, loadError, restMessage) {
         if (showControls && !showMenu && !showSubtitleDialog && !showPlaylist && !resumeDialogVisible &&
             !finished && loadError == null && restMessage == null
         ) {
-            delay(5000)
-            showControls = false
+            lastInteractionAt.set(System.currentTimeMillis())
+            while (true) {
+                delay(250)
+                if (System.currentTimeMillis() - lastInteractionAt.get() >= 5000) {
+                    showControls = false
+                    break
+                }
+            }
         }
     }
 
@@ -394,7 +404,7 @@ fun VideoPlayerScreen(
             .onFocusChanged { rootFocused = it.isFocused }
             // 预览阶段先拿到所有按键（含焦点在控件按钮上时），用于刷新无操作计时
             .onPreviewKeyEvent {
-                interactionTick++
+                lastInteractionAt.set(System.currentTimeMillis())
                 false
             }
             .onKeyEvent { event ->
@@ -473,16 +483,23 @@ fun VideoPlayerScreen(
                         true
                     }
                     event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter -> {
-                        if (isDown && !centerKeyHeld && !finished &&
-                            !showMenu && !resumeDialogVisible && !showSubtitleDialog && !showPlaylist
-                        ) {
-                            if (isPlaying) {
-                                viewModel.pause()
-                                focusPauseButtonOnPause = true
-                            } else {
-                                viewModel.resume()
+                        if (isDown && !centerKeyHeld) {
+                            when {
+                                // 续播弹窗没抢到焦点时（例如触摸后处于触摸模式），OK 兜底按“继续播放”处理
+                                resumeDialogVisible -> {
+                                    viewModel.startPlayback(savedPosition)
+                                    showResumeDialog = false
+                                }
+                                !finished && !showMenu && !showSubtitleDialog && !showPlaylist -> {
+                                    if (isPlaying) {
+                                        viewModel.pause()
+                                        focusPauseButtonOnPause = true
+                                    } else {
+                                        viewModel.resume()
+                                    }
+                                    showControls = true
+                                }
                             }
-                            showControls = true
                         }
                         if (isDown) centerKeyHeld = true else if (isUp) centerKeyHeld = false
                         true
@@ -516,6 +533,8 @@ fun VideoPlayerScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
+                    // AndroidView.update 每次重组都会执行，避免重复设置字幕样式触发重排版
+                    val appliedStyle = remember { intArrayOf(-1, -1) }
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
@@ -532,24 +551,34 @@ fun VideoPlayerScreen(
                             }
                         },
                         update = { playerView ->
-                            playerView.resizeMode = when (resizeMode) {
-                                1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                                2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            if (appliedStyle[0] != resizeMode) {
+                                playerView.resizeMode = when (resizeMode) {
+                                    1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                    2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                }
+                                appliedStyle[0] = resizeMode
                             }
-                            playerView.subtitleView?.let { subtitleView ->
-                                val baseSizeSp = 20f
-                                subtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, baseSizeSp * subtitleSize)
-                                subtitleView.setStyle(
-                                    CaptionStyleCompat(
-                                        AndroidColor.WHITE,
-                                        AndroidColor.argb(128, 0, 0, 0),
-                                        AndroidColor.TRANSPARENT,
-                                        CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                                        AndroidColor.BLACK,
-                                        null
+                            val sizePercent = (subtitleSize * 100).toInt()
+                            if (appliedStyle[1] != sizePercent) {
+                                playerView.subtitleView?.let { subtitleView ->
+                                    val baseSizeSp = 20f
+                                    subtitleView.setFixedTextSize(
+                                        TypedValue.COMPLEX_UNIT_SP,
+                                        baseSizeSp * subtitleSize
                                     )
-                                )
+                                    subtitleView.setStyle(
+                                        CaptionStyleCompat(
+                                            AndroidColor.WHITE,
+                                            AndroidColor.argb(128, 0, 0, 0),
+                                            AndroidColor.TRANSPARENT,
+                                            CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                                            AndroidColor.BLACK,
+                                            null
+                                        )
+                                    )
+                                }
+                                appliedStyle[1] = sizePercent
                             }
                         },
                         modifier = Modifier.fillMaxSize()
@@ -559,40 +588,13 @@ fun VideoPlayerScreen(
         }
 
         // 副字幕由引擎之外自行渲染：引擎单次只能显示一条文本轨
-        val secondaryText = secondarySubtitle
-            ?.takeIf { dualSubtitleEnabled && !isAudio && !finished && loadError == null && restMessage == null }
-            ?.let { SubtitleParser.cueAt(it.cues, currentPosition)?.text }
-        if (!secondaryText.isNullOrBlank()) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(
-                        start = 48.dp,
-                        end = 48.dp,
-                        bottom = if (selectedSubtitleName != null) (56f + 40f * subtitleSize).dp else 28.dp
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = secondaryText,
-                    color = Color.White,
-                    fontSize = (20f * subtitleSize).sp,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        shadow = Shadow(
-                            color = Color.Black,
-                            offset = Offset(0f, 2f),
-                            blurRadius = 6f
-                        )
-                    ),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0x8C000000))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                )
-            }
-        }
+        SecondarySubtitleOverlay(
+            viewModel = viewModel,
+            subtitle = secondarySubtitle,
+            subtitleSize = subtitleSize,
+            hasMainSubtitle = selectedSubtitleName != null,
+            enabled = dualSubtitleEnabled && !isAudio && !finished && loadError == null && restMessage == null
+        )
 
         AnimatedVisibility(
             visible = showControls && !showMenu,
@@ -675,40 +677,13 @@ fun VideoPlayerScreen(
                         .padding(horizontal = 24.dp, vertical = 12.dp)
                 ) {
                     // Progress bar with times
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                    runCatching { rootFocusRequester.requestFocus() }
-                                    true
-                                } else {
-                                    false
-                                }
-                            },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = formatTime(currentPosition),
-                            color = Color(0xFFAAAAAA),
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(end = 12.dp)
-                        )
-
-                        PlayerSlider(
-                            value = if (duration > 0) currentPosition.toFloat() else 0f,
-                            onValueChange = { viewModel.seekTo(it.toLong()) },
-                            valueRange = 0f..if (duration > 0) duration.toFloat() else 1f,
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        Text(
-                            text = formatTime(duration),
-                            color = Color(0xFFAAAAAA),
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(start = 12.dp)
-                        )
-                    }
+                    PlayerProgressBar(
+                        viewModel = viewModel,
+                        seekStepMs = seekStepSeconds * 1000L,
+                        onSeekBy = ::seekBy,
+                        onNavigateUp = { runCatching { rootFocusRequester.requestFocus() } },
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -766,28 +741,7 @@ fun VideoPlayerScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                PlayerIconButton(
-                                    icon = if (volume > 0f) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                                    contentDescription = "音量",
-                                    iconSize = 22.dp,
-                                    onClick = {
-                                        volume = if (volume > 0f) 0f else 1f
-                                        viewModel.setVolume(volume)
-                                    }
-                                )
-                                PlayerSlider(
-                                    value = volume,
-                                    onValueChange = {
-                                        volume = it
-                                        viewModel.setVolume(it)
-                                    },
-                                    modifier = Modifier.width(80.dp)
-                                )
-                            }
+                            VolumeControl(viewModel)
 
                             if (!isAudio) {
                                 PlayerIconButton(
@@ -1092,11 +1046,7 @@ fun VideoPlayerScreen(
             ) {
                 CircularProgressIndicator(color = Color.White)
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = formatSpeed(bufferSpeed),
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                BufferSpeedText(viewModel)
             }
         }
 
@@ -1513,16 +1463,7 @@ private fun PlayerIconButton(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
-    val background by animateColorAsState(
-        targetValue = if (focused) Color.White else Color.Transparent,
-        animationSpec = tween(150),
-        label = "buttonBackground"
-    )
-    val iconTint by animateColorAsState(
-        targetValue = if (focused) Color(0xFF1C2026) else Color.White,
-        animationSpec = tween(150),
-        label = "buttonIconTint"
-    )
+    // 只保留缩放动画（graphicsLayer 内读取，仅重绘）；颜色立即切换，减少焦点移动时的重组
     val scale by animateFloatAsState(
         targetValue = if (focused) 1.12f else 1f,
         animationSpec = tween(150),
@@ -1539,7 +1480,7 @@ private fun PlayerIconButton(
             }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(CircleShape)
-            .background(background)
+            .background(if (focused) Color.White else Color.Transparent)
             .then(if (focused) Modifier.border(2.dp, AppColors.primary, CircleShape) else Modifier)
             .clickable(
                 interactionSource = interactionSource,
@@ -1551,7 +1492,7 @@ private fun PlayerIconButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = iconTint,
+            tint = if (focused) Color(0xFF1C2026) else Color.White,
             modifier = Modifier.size(iconSize)
         )
     }
@@ -1603,7 +1544,9 @@ private fun PlayerSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
-    valueRange: ClosedFloatingPointRange<Float> = 0f..1f
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    // 大于 0 时左右方向键直接调值（电视遥控器上原生 Slider 不会处理方向键）
+    keyStep: Float = 0f
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
@@ -1616,6 +1559,16 @@ private fun PlayerSlider(
         interactionSource = interactionSource,
         modifier = modifier
             .clip(shape)
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || keyStep <= 0f) return@onKeyEvent false
+                val delta = when (event.key) {
+                    Key.DirectionLeft -> -keyStep
+                    Key.DirectionRight -> keyStep
+                    else -> return@onKeyEvent false
+                }
+                onValueChange((value + delta).coerceIn(valueRange.start, valueRange.endInclusive))
+                true
+            }
             .then(
                 if (focused) {
                     Modifier
@@ -1631,6 +1584,134 @@ private fun PlayerSlider(
             inactiveTrackColor = Color(0xFF555555)
         )
     )
+}
+
+@Composable
+private fun PlayerProgressBar(
+    viewModel: VideoPlayerViewModel,
+    seekStepMs: Long,
+    onSeekBy: (Long) -> Unit,
+    onNavigateUp: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // 进度每 500ms 刷新，独立收集，避免播放中整页跟着重组
+    val position by viewModel.currentPosition.collectAsState()
+    val duration by viewModel.duration.collectAsState()
+    Row(
+        modifier = modifier.onKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+            when (event.key) {
+                Key.DirectionUp -> {
+                    onNavigateUp()
+                    true
+                }
+                // 进度条获得焦点时左右键快进/快退，和画面上的方向键行为一致
+                Key.DirectionLeft, Key.DirectionRight -> {
+                    onSeekBy(if (event.key == Key.DirectionRight) seekStepMs else -seekStepMs)
+                    true
+                }
+                else -> false
+            }
+        },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = formatTime(position),
+            color = Color(0xFFAAAAAA),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(end = 12.dp)
+        )
+
+        PlayerSlider(
+            value = if (duration > 0) position.toFloat() else 0f,
+            onValueChange = { viewModel.seekTo(it.toLong()) },
+            valueRange = 0f..if (duration > 0) duration.toFloat() else 1f,
+            modifier = Modifier.weight(1f)
+        )
+
+        Text(
+            text = formatTime(duration),
+            color = Color(0xFFAAAAAA),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(start = 12.dp)
+        )
+    }
+}
+
+@Composable
+private fun VolumeControl(viewModel: VideoPlayerViewModel) {
+    // 遥控器音量键也会改系统音量，独立收集避免整页重组
+    val volume by viewModel.volume.collectAsState()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        PlayerIconButton(
+            icon = if (volume > 0f) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+            contentDescription = "音量",
+            iconSize = 22.dp,
+            onClick = { viewModel.setVolume(if (volume > 0f) 0f else 1f) }
+        )
+        PlayerSlider(
+            value = volume,
+            onValueChange = { viewModel.setVolume(it) },
+            modifier = Modifier.width(80.dp),
+            keyStep = 0.05f
+        )
+    }
+}
+
+@Composable
+private fun BufferSpeedText(viewModel: VideoPlayerViewModel) {
+    val bufferSpeed by viewModel.bufferSpeed.collectAsState()
+    Text(
+        text = formatSpeed(bufferSpeed),
+        color = Color.White,
+        style = MaterialTheme.typography.bodyMedium
+    )
+}
+
+@Composable
+private fun BoxScope.SecondarySubtitleOverlay(
+    viewModel: VideoPlayerViewModel,
+    subtitle: SecondarySubtitle?,
+    subtitleSize: Float,
+    hasMainSubtitle: Boolean,
+    enabled: Boolean
+) {
+    if (!enabled) return
+    val position by viewModel.currentPosition.collectAsState()
+    val secondaryText = subtitle?.let { SubtitleParser.cueAt(it.cues, position)?.text }
+    if (secondaryText.isNullOrBlank()) return
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .padding(
+                start = 48.dp,
+                end = 48.dp,
+                bottom = if (hasMainSubtitle) (56f + 40f * subtitleSize).dp else 28.dp
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = secondaryText,
+            color = Color.White,
+            fontSize = (20f * subtitleSize).sp,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                shadow = Shadow(
+                    color = Color.Black,
+                    offset = Offset(0f, 2f),
+                    blurRadius = 6f
+                )
+            ),
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0x8C000000))
+                .padding(horizontal = 14.dp, vertical = 6.dp)
+        )
+    }
 }
 
 private fun formatTime(ms: Long): String {
