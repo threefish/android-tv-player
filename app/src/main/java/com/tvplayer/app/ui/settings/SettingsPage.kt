@@ -4,9 +4,10 @@ import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,16 +16,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tvplayer.app.ui.component.AppButton
 import com.tvplayer.app.ui.component.AppButtonDefaults
 import com.tvplayer.app.ui.theme.AppColors
-import com.tvplayer.app.ui.theme.AppShapes
-import com.tvplayer.app.ui.theme.Spacing
 import com.tvplayer.app.util.NetworkUtils
 import com.tvplayer.app.util.QrCodeGenerator
 import com.tvplayer.core.model.WebDavConfig
@@ -37,6 +40,7 @@ fun SettingsPage(
     val context = LocalContext.current
     val webDavConfig by viewModel.webDavConfig.collectAsState()
     val isTesting by viewModel.isTesting.collectAsState()
+    val connectionStatus by viewModel.connectionStatus.collectAsState()
     val toastMessage by viewModel.toastMessage.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val seekStep by viewModel.seekStep.collectAsState()
@@ -58,175 +62,131 @@ fun SettingsPage(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = Spacing.xxxl, vertical = Spacing.lg),
-        verticalArrangement = Arrangement.spacedBy(Spacing.lg)
+    // 去掉大标题与分组卡片，用分组标题 + 紧凑行承载参数，一屏可扫读
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 56.dp, end = 56.dp, top = 8.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(40.dp),
     ) {
-        item {
-            Text(
-                text = "设置",
-                style = MaterialTheme.typography.titleLarge,
-                color = AppColors.listHeadline
+        Column(
+            modifier = Modifier
+                .weight(2f)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(end = 4.dp, bottom = 12.dp),
+        ) {
+            SectionHeader(
+                title = "文件来源",
+                action = {
+                    ActionButton(label = "+ 新增", onClick = { showEditDialog = true })
+                },
             )
-        }
+            if (webDavConfig != null) {
+                SourceBlock(
+                    url = webDavConfig!!.url,
+                    status = connectionStatus,
+                    isTesting = isTesting,
+                    onTest = { viewModel.testConnection() },
+                    onEdit = { showEditDialog = true },
+                    onDelete = { showDeleteConfirm = true },
+                )
+            } else {
+                Text(
+                    text = "暂无文件来源，点击右侧新增",
+                    fontSize = 13.sp,
+                    color = AppColors.textMuted,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            }
 
-        // File Sources + QR Code row
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.lg)
-            ) {
-                // File Sources section
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            Spacer(Modifier.height(14.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    SectionHeader(title = "播放")
+                    SettingRow(label = "默认倍速") {
+                        SpeedSelector(currentSpeed = playbackSpeed, onSpeedChange = viewModel::updatePlaybackSpeed)
+                    }
+                    SettingRow(label = "快进 / 快退步长", showDivider = false) {
+                        SeekStepSelector(currentStep = seekStep, onStepChange = viewModel::updateSeekStep)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    SectionHeader(title = "字幕")
+                    SettingRow(label = "字幕大小") {
+                        SubtitleSizeSelector(currentSize = subtitleSize, onSizeChange = viewModel::updateSubtitleSize)
+                    }
+                    SettingRow(
+                        label = "双字幕",
+                        description = "播放页可选第二字幕同屏显示",
+                        showDivider = false,
                     ) {
-                        Text("文件来源", style = MaterialTheme.typography.titleMedium, color = AppColors.listHeadline)
-                        AppButton(onClick = { showEditDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp), tint = AppColors.onButton)
-                            Spacer(Modifier.width(Spacing.xs))
-                            Text("新增")
-                        }
-                    }
-
-                    if (webDavConfig != null) {
-                        SourceRow(
-                            type = "WebDAV",
-                            url = webDavConfig!!.url,
-                            isTesting = isTesting,
-                            onTest = { viewModel.testConnection() },
-                            onEdit = { showEditDialog = true },
-                            onDelete = { showDeleteConfirm = true }
+                        Switch(
+                            checked = dualSubtitle,
+                            onCheckedChange = { viewModel.toggleDualSubtitle() },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = AppColors.primary,
+                                uncheckedThumbColor = AppColors.onSurfaceVariant,
+                                uncheckedTrackColor = AppColors.outline,
+                            )
                         )
-                    } else {
+                    }
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    SectionHeader(title = "播放提醒")
+                    SettingRow(label = "启用播放提醒") {
+                        Switch(
+                            checked = playReminder.enabled,
+                            onCheckedChange = { viewModel.updatePlayReminder(playReminder.copy(enabled = it)) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = AppColors.primary,
+                                uncheckedThumbColor = AppColors.onSurfaceVariant,
+                                uncheckedTrackColor = AppColors.outline,
+                            )
+                        )
+                    }
+                    SettingRow(label = "连续播放时长") {
+                        MinutesSelector(
+                            currentMinutes = playReminder.playMinutes,
+                            options = listOf(1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240),
+                            onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(playMinutes = it)) }
+                        )
+                    }
+                    SettingRow(label = "休息时长") {
+                        MinutesSelector(
+                            currentMinutes = playReminder.restMinutes,
+                            options = listOf(1, 3, 5, 10, 15, 20, 30, 60),
+                            onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(restMinutes = it)) }
+                        )
+                    }
+                    SettingRow(label = "休息结束后", showDivider = false) {
+                        ResumeModeSelector(
+                            autoResume = playReminder.autoResume,
+                            onModeChange = { viewModel.updatePlayReminder(playReminder.copy(autoResume = it)) }
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    SectionHeader(title = "关于")
+                    SettingRow(label = "版本", showDivider = false) {
                         Text(
-                            "暂无文件来源，点击新增添加",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AppColors.listCaption
+                            text = viewModel.version,
+                            fontSize = 13.sp,
+                            color = AppColors.textMuted,
                         )
                     }
                 }
-
-                // QR Code
-                Column(
-                    modifier = Modifier.width(200.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-                ) {
-                    if (qrBitmap != null) {
-                        Image(
-                            bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "Web管理二维码",
-                            modifier = Modifier.size(140.dp)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier.size(140.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("二维码生成失败", style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption)
-                        }
-                    }
-                    Text("扫码访问Web管理", style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption)
-                    Text(
-                        text = webUrl,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = AppColors.listHeadline,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
             }
         }
 
-        // Playback Settings
-        item {
-            SettingsSection(title = "播放设置") {
-                SettingsRow("默认倍数") {
-                    SpeedSelector(currentSpeed = playbackSpeed, onSpeedChange = viewModel::updatePlaybackSpeed)
-                }
-                SettingsRow("快进/快退步长") {
-                    SeekStepSelector(currentStep = seekStep, onStepChange = viewModel::updateSeekStep)
-                }
-            }
-        }
-
-        // Play Reminder
-        item {
-            SettingsSection(title = "播放提醒") {
-                SettingsRow("启用播放提醒") {
-                    Switch(
-                        checked = playReminder.enabled,
-                        onCheckedChange = { viewModel.updatePlayReminder(playReminder.copy(enabled = it)) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = AppColors.primary,
-                            checkedTrackColor = AppColors.primaryContainer,
-                            uncheckedThumbColor = AppColors.onSurfaceVariant,
-                            uncheckedTrackColor = AppColors.outline,
-                        )
-                    )
-                }
-                SettingsRow("连续播放时长") {
-                    MinutesSelector(
-                        currentMinutes = playReminder.playMinutes,
-                        options = listOf(1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240),
-                        onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(playMinutes = it)) }
-                    )
-                }
-                SettingsRow("休息时长") {
-                    MinutesSelector(
-                        currentMinutes = playReminder.restMinutes,
-                        options = listOf(1, 3, 5, 10, 15, 20, 30, 60),
-                        onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(restMinutes = it)) }
-                    )
-                }
-                SettingsRow("休息结束后") {
-                    ResumeModeSelector(
-                        autoResume = playReminder.autoResume,
-                        onModeChange = { viewModel.updatePlayReminder(playReminder.copy(autoResume = it)) }
-                    )
-                }
-            }
-        }
-
-        // Subtitle Settings
-        item {
-            SettingsSection(title = "字幕设置") {
-                SettingsRow("字幕大小") {
-                    SubtitleSizeSelector(currentSize = subtitleSize, onSizeChange = viewModel::updateSubtitleSize)
-                }
-                SettingsRow("双字幕开关") {
-                    Switch(
-                        checked = dualSubtitle,
-                        onCheckedChange = { viewModel.toggleDualSubtitle() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = AppColors.primary,
-                            checkedTrackColor = AppColors.primaryContainer,
-                            uncheckedThumbColor = AppColors.onSurfaceVariant,
-                            uncheckedTrackColor = AppColors.outline,
-                        )
-                    )
-                }
-            }
-        }
-
-        // About
-        item {
-            SettingsSection(title = "关于") {
-                SettingsRow("版本") {
-                    Text(viewModel.version, style = MaterialTheme.typography.bodyMedium, color = AppColors.listCaption)
-                }
-            }
+        // 右栏 1fr：Web 管理二维码
+        Column(modifier = Modifier.weight(1f)) {
+            QrCard(webUrl = webUrl, qrBitmap = qrBitmap)
         }
     }
 
-    // Edit dialog
     if (showEditDialog) {
         WebDavEditDialog(
             existingConfig = webDavConfig,
@@ -240,7 +200,6 @@ fun SettingsPage(
         )
     }
 
-    // Delete confirmation
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
@@ -260,72 +219,266 @@ fun SettingsPage(
 }
 
 @Composable
-private fun SourceRow(
-    type: String,
-    url: String,
-    isTesting: Boolean,
-    onTest: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+private fun SectionHeader(
+    title: String,
+    action: (@Composable () -> Unit)? = null,
 ) {
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(AppShapes.medium)
-            .background(AppColors.surfaceVariant)
+            .padding(top = 8.dp, bottom = 2.dp)
+            .heightIn(min = 32.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(12.dp)
+                .background(AppColors.primary, RoundedCornerShape(2.dp))
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 1.sp,
+            color = AppColors.textMuted,
+            modifier = Modifier.weight(1f),
+        )
+        action?.invoke()
+    }
+}
+
+@Composable
+private fun SettingRow(
+    label: String,
+    description: String? = null,
+    showDivider: Boolean = true,
+    trailing: @Composable RowScope.() -> Unit,
+) {
+    Column {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = Spacing.md, vertical = 12.dp),
+                .heightIn(min = 40.dp)
+                .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(type, style = MaterialTheme.typography.titleSmall, color = AppColors.listHeadline)
-                Text(url, style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption, maxLines = 1)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                AppButton(onClick = onEdit) { Text("修改") }
-                AppButton(onClick = onDelete) { Text("删除", color = AppColors.error) }
-                AppButton(onClick = onTest, enabled = !isTesting) {
-                    if (isTesting) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = AppColors.onButton)
-                    } else {
-                        Text("测试连接")
-                    }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 15.sp,
+                    color = AppColors.textPrimary,
+                )
+                if (description != null) {
+                    Text(
+                        text = description,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        color = AppColors.textMuted,
+                        modifier = Modifier.padding(top = 1.dp),
+                    )
                 }
             }
+            trailing()
+        }
+        if (showDivider) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(AppColors.divider)
+            )
         }
     }
 }
 
 @Composable
-private fun SettingsSection(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit
+private fun ActionButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    danger: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    AppButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(32.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+        colors = if (danger) AppButtonDefaults.dangerColors() else AppButtonDefaults.colors(),
+        borderColor = if (danger) Color(0x4DF87171) else Color(0x26FFFFFF),
     ) {
-        Text(text = title, style = MaterialTheme.typography.titleMedium, color = AppColors.listHeadline)
-        content()
+        Text(text = label, fontSize = 14.sp)
     }
 }
 
 @Composable
-private fun SettingsRow(
-    label: String,
-    trailing: @Composable RowScope.() -> Unit
+private fun SourceBlock(
+    url: String,
+    status: Boolean?,
+    isTesting: Boolean,
+    onTest: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColors.inset)
+            .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = AppColors.onBackground)
-        trailing()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "WebDAV 服务",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.textPrimary,
+                )
+                StatusTag(status = status)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppButton(
+                    onClick = onTest,
+                    enabled = !isTesting,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                ) {
+                    Text(if (isTesting) "测试中…" else "测试连接", fontSize = 14.sp)
+                }
+                ActionButton(label = "修改", onClick = onEdit)
+                ActionButton(label = "删除", onClick = onDelete, danger = true)
+            }
+        }
+        Text(
+            text = url,
+            fontSize = 12.sp,
+            color = AppColors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+@Composable
+private fun StatusTag(status: Boolean?) {
+    val text = when (status) {
+        true -> "已连接"
+        false -> "连接失败"
+        null -> "已配置"
+    }
+    val content = when (status) {
+        true -> AppColors.accentSoft
+        false -> AppColors.danger
+        null -> AppColors.textMuted
+    }
+    val background = when (status) {
+        true -> Color(0x333B82F6)
+        false -> Color(0x33EF4444)
+        null -> Color(0x1AFFFFFF)
+    }
+    val border = when (status) {
+        true -> Color(0x663B82F6)
+        false -> Color(0x66EF4444)
+        null -> Color(0x33FFFFFF)
+    }
+    Text(
+        text = text,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        color = content,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(background)
+            .border(1.dp, border, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+@Composable
+private fun QrCard(webUrl: String, qrBitmap: Bitmap?) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(AppColors.card)
+            .border(1.dp, AppColors.cardBorder, RoundedCornerShape(16.dp))
+            .padding(horizontal = 18.dp, vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = "扫码访问 Web 管理后台",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = AppColors.textPrimary,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "使用局域网设备打开浏览器访问：",
+            fontSize = 12.sp,
+            color = AppColors.textMuted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Box(
+            modifier = Modifier
+                .padding(top = 12.dp, bottom = 8.dp)
+                .size(104.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.White)
+                .padding(8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (qrBitmap != null) {
+                Image(
+                    bitmap = qrBitmap.asImageBitmap(),
+                    contentDescription = "Web管理二维码",
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(
+                    text = "二维码生成失败",
+                    fontSize = 11.sp,
+                    color = Color(0xFF666666),
+                )
+            }
+        }
+        Text(
+            text = webUrl,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = AppColors.accentSoft,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun SelectorButton(text: String, onClick: () -> Unit) {
+    AppButton(
+        onClick = onClick,
+        modifier = Modifier.height(32.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Text(text = text, fontSize = 14.sp)
+        Icon(
+            imageVector = Icons.Default.ArrowDropDown,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -334,10 +487,7 @@ private fun SpeedSelector(currentSpeed: Float, onSpeedChange: (Float) -> Unit) {
     val speeds = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
     var expanded by remember { mutableStateOf(false) }
     Box {
-        AppButton(onClick = { expanded = true }) {
-            Text("${currentSpeed}x")
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
+        SelectorButton(text = "${currentSpeed}x") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             speeds.forEach { speed ->
                 DropdownMenuItem(text = { Text("${speed}x") }, onClick = { onSpeedChange(speed); expanded = false })
@@ -351,10 +501,7 @@ private fun SeekStepSelector(currentStep: Int, onStepChange: (Int) -> Unit) {
     val steps = listOf(5, 10, 15, 30, 60)
     var expanded by remember { mutableStateOf(false) }
     Box {
-        AppButton(onClick = { expanded = true }) {
-            Text("${currentStep}秒")
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
+        SelectorButton(text = "${currentStep}秒") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             steps.forEach { step ->
                 DropdownMenuItem(text = { Text("${step}秒") }, onClick = { onStepChange(step); expanded = false })
@@ -368,10 +515,7 @@ private fun SubtitleSizeSelector(currentSize: Float, onSizeChange: (Float) -> Un
     val sizes = listOf(0.8f, 1.0f, 1.2f, 1.5f, 2.0f)
     var expanded by remember { mutableStateOf(false) }
     Box {
-        AppButton(onClick = { expanded = true }) {
-            Text("${(currentSize * 100).toInt()}%")
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
+        SelectorButton(text = "${(currentSize * 100).toInt()}%") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             sizes.forEach { size ->
                 DropdownMenuItem(text = { Text("${(size * 100).toInt()}%") }, onClick = { onSizeChange(size); expanded = false })
@@ -386,10 +530,7 @@ private fun MinutesSelector(currentMinutes: Int, options: List<Int>, onMinutesCh
     val choices = remember(currentMinutes, options) { (options + currentMinutes).distinct().sorted() }
     var expanded by remember { mutableStateOf(false) }
     Box {
-        AppButton(onClick = { expanded = true }) {
-            Text("${currentMinutes}分钟")
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
+        SelectorButton(text = "${currentMinutes}分钟") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             choices.forEach { minutes ->
                 DropdownMenuItem(text = { Text("${minutes}分钟") }, onClick = { onMinutesChange(minutes); expanded = false })
@@ -402,10 +543,7 @@ private fun MinutesSelector(currentMinutes: Int, options: List<Int>, onMinutesCh
 private fun ResumeModeSelector(autoResume: Boolean, onModeChange: (Boolean) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        AppButton(onClick = { expanded = true }) {
-            Text(if (autoResume) "自动继续" else "手动确认")
-            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-        }
+        SelectorButton(text = if (autoResume) "自动继续" else "手动确认") { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("手动确认继续") }, onClick = { onModeChange(false); expanded = false })
             DropdownMenuItem(text = { Text("自动继续播放") }, onClick = { onModeChange(true); expanded = false })
@@ -427,15 +565,15 @@ private fun WebDavEditDialog(
     var rootPath by remember { mutableStateOf(existingConfig?.rootPath ?: "/") }
 
     val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = AppColors.listHeadline,
-        unfocusedTextColor = AppColors.listHeadline,
+        focusedTextColor = AppColors.textPrimary,
+        unfocusedTextColor = AppColors.textPrimary,
         focusedContainerColor = AppColors.surfaceVariant,
         unfocusedContainerColor = AppColors.surfaceVariant,
         cursorColor = AppColors.primary,
         focusedBorderColor = AppColors.primary,
         unfocusedBorderColor = AppColors.outline,
         focusedLabelColor = AppColors.primary,
-        unfocusedLabelColor = AppColors.listCaption,
+        unfocusedLabelColor = AppColors.textMuted,
     )
 
     AlertDialog(

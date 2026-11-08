@@ -24,13 +24,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tvplayer.app.ui.component.AppCard
 import com.tvplayer.app.ui.player.VideoPlayerActivity
 import com.tvplayer.app.ui.theme.AppColors
-import com.tvplayer.app.ui.theme.AppShapes
 import com.tvplayer.app.ui.theme.Spacing
 import com.tvplayer.core.model.HomeGridItem
 
@@ -96,9 +97,9 @@ fun HomePage(
                         false
                     }
                 },
-            contentPadding = PaddingValues(horizontal = Spacing.xxxl, vertical = Spacing.lg),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.lg)
+            contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(32.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             items(gridItems) { item ->
                 FolderCard(
@@ -179,14 +180,14 @@ private fun FolderCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = Modifier
-            .aspectRatio(16f / 9f)
+            .height(140.dp)
             .onFocusChanged { if (it.isFocused) onFocused() },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             Icon(
                 Icons.Default.Folder,
@@ -194,20 +195,24 @@ private fun FolderCard(
                 modifier = Modifier.size(40.dp),
                 tint = AppColors.primary
             )
-            Text(
-                text = item.displayName,
-                style = MaterialTheme.typography.titleSmall,
-                color = AppColors.listHeadline,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = item.folderPath,
-                style = MaterialTheme.typography.bodySmall,
-                color = AppColors.listCaption,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Column {
+                Text(
+                    text = item.displayName,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppColors.listHeadline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = item.folderPath,
+                    fontSize = 13.sp,
+                    color = AppColors.listCaption,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
 
         if (menuExpanded) {

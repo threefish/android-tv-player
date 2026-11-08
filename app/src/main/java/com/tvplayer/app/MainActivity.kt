@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,8 +24,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -49,9 +51,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             TVPlayerTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawBehind {
+                            drawRect(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        AppColors.pageTop,
+                                        AppColors.pageMid,
+                                        AppColors.pageBottom,
+                                    ),
+                                    center = Offset(size.width / 2f, 0f),
+                                    radius = size.maxDimension * 0.85f,
+                                )
+                            )
+                        }
                 ) {
                     MainLayout(onExit = { finish() })
                 }
@@ -87,45 +102,47 @@ private fun MainLayout(onExit: () -> Unit) {
         if (showExitConfirm) showExitConfirm = false else showExitConfirm = true
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        AppToolbar(
-            activeTab = selectedTab,
-            onTabClick = onTabClick,
-            tabFocusRequest = tabFocusRequest,
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            AppToolbar(
+                activeTab = selectedTab,
+                onTabClick = onTabClick,
+                tabFocusRequest = tabFocusRequest,
+            )
 
-        Box(modifier = Modifier.weight(1f)) {
-            if (0 in visitedTabs) {
-                TabHost(visible = selectedTab == 0) {
-                    HomePage(
-                        onOpenInBrowser = { path ->
-                            browserPath = path
-                            onTabClick(1)
-                        }
-                    )
+            Box(modifier = Modifier.weight(1f)) {
+                if (0 in visitedTabs) {
+                    TabHost(visible = selectedTab == 0) {
+                        HomePage(
+                            onOpenInBrowser = { path ->
+                                browserPath = path
+                                onTabClick(1)
+                            }
+                        )
+                    }
                 }
-            }
-            if (1 in visitedTabs) {
-                TabHost(visible = selectedTab == 1) {
-                    FileBrowserPage(
-                        initialPath = browserPath,
-                        isActive = selectedTab == 1,
-                        refreshTick = fileRefreshTick,
-                    )
+                if (1 in visitedTabs) {
+                    TabHost(visible = selectedTab == 1) {
+                        FileBrowserPage(
+                            initialPath = browserPath,
+                            isActive = selectedTab == 1,
+                            refreshTick = fileRefreshTick,
+                        )
+                    }
                 }
-            }
-            if (2 in visitedTabs) {
-                TabHost(visible = selectedTab == 2) {
-                    ImagesPage(
-                        onBackToTabs = { tabFocusRequest++ },
-                        isActive = selectedTab == 2,
-                        refreshTick = imageRefreshTick,
-                    )
+                if (2 in visitedTabs) {
+                    TabHost(visible = selectedTab == 2) {
+                        ImagesPage(
+                            onBackToTabs = { tabFocusRequest++ },
+                            isActive = selectedTab == 2,
+                            refreshTick = imageRefreshTick,
+                        )
+                    }
                 }
-            }
-            if (3 in visitedTabs) {
-                TabHost(visible = selectedTab == 3) {
-                    SettingsPage()
+                if (3 in visitedTabs) {
+                    TabHost(visible = selectedTab == 3) {
+                        SettingsPage()
+                    }
                 }
             }
         }

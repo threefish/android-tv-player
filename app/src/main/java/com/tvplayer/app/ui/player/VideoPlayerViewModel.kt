@@ -9,6 +9,7 @@ import android.util.Log
 import com.tvplayer.core.model.FileInfo
 import com.tvplayer.core.model.PlayHistory
 import com.tvplayer.core.model.PlayReminder
+import com.tvplayer.core.model.PlaybackSettings
 import com.tvplayer.core.model.RestDeadline
 import com.tvplayer.core.model.WebDavConfig
 import com.tvplayer.core.repository.AppSettingsRepository
@@ -18,16 +19,21 @@ import com.tvplayer.core.repository.SeriesPlaylistRepository
 import com.tvplayer.core.repository.WatchTimeRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
 import com.tvplayer.player.PlayerService
+import com.tvplayer.player.SubtitleCue
 import com.tvplayer.player.SubtitleFinder
 import com.tvplayer.player.SubtitleInfo
+import com.tvplayer.player.SubtitleParser
 import com.tvplayer.player.SubtitleSource
+import com.tvplayer.player.SubtitleTextDecoder
 import com.tvplayer.player.TrackInfo
+import com.tvplayer.webdav.WebDavClient
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,6 +64,13 @@ data class RestState(
     val autoResume: Boolean
 )
 
+/** 副字幕：主字幕仍走播放引擎，副字幕由 UI 层按当前进度叠加 */
+data class SecondarySubtitle(
+    val name: String,
+    val language: String?,
+    val cues: List<SubtitleCue>
+)
+
 @HiltViewModel
 class VideoPlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -79,6 +92,19 @@ class VideoPlayerViewModel @Inject constructor(
 
     private val _subtitles = MutableStateFlow<List<SubtitleInfo>>(emptyList())
     val subtitles: StateFlow<List<SubtitleInfo>> = _subtitles.asStateFlow()
+
+    private val _secondarySubtitle = MutableStateFlow<SecondarySubtitle?>(null)
+    val secondarySubtitle: StateFlow<SecondarySubtitle?> = _secondarySubtitle.asStateFlow()
+
+    private val _dualSubtitleEnabled = MutableStateFlow(false)
+    val dualSubtitleEnabled: StateFlow<Boolean> = _dualSubtitleEnabled.asStateFlow()
+
+    private val _seekStepSeconds = MutableStateFlow(10)
+    val seekStepSeconds: StateFlow<Int> = _seekStepSeconds.asStateFlow()
+
+    private var secondaryLanguage: String? = null
+    private var secondaryDisabled = false
+    private var secondaryJob: Job? = null
 
     private val _isAudio = MutableStateFlow(false)
     val isAudio: StateFlow<Boolean> = _isAudio.asStateFlow()
@@ -268,6 +294,11 @@ class VideoPlayerViewModel @Inject constructor(
         }
         // 历史必须在开播前加载完，否则会先用 0 开播、弹窗随后才出现
         viewModelScope.launch {
+            val settings = appSettingsRepository.getPlaybackSettings()
+            _dualSubtitleEnabled.value = settings.dualSubtitle
+            _seekStepSeconds.value = settings.seekStepSeconds
+            playerService.setPlaybackSpeed(settings.playbackSpeed)
+            playerService.setSubtitleSize(settings.subtitleSize)
             restoreRestDeadline()
             if (folderPath != null) {
                 if (loadFolderPlaylist()) _isReady.value = true
@@ -435,6 +466,7 @@ class VideoPlayerViewModel @Inject constructor(
                 startPosition = position,
                 subtitles = buildSubtitleSources(config, subtitles)
             )
+            prepareSecondarySubtitle(subtitles, isAudio)
         }
     }
 
@@ -465,6 +497,7 @@ class VideoPlayerViewModel @Inject constructor(
                 requestHeaders = authHeaders(config),
                 subtitles = buildSubtitleSources(config, subtitles)
             )
+            prepareSecondarySubtitle(subtitles, file.isAudio)
         }
     }
 
@@ -567,6 +600,84 @@ class VideoPlayerViewModel @Inject constructor(
     fun selectSubtitle(index: Int) {
         val subtitle = _subtitles.value.getOrNull(index) ?: return
         playerService.selectExternalSubtitle(subtitle.name)
+        if (_dualSubtitleEnabled.value && _secondarySubtitle.value?.name == subtitle.name) {
+            // 主字幕与副字幕不能是同一轨，自动改选其它候选
+            secondaryDisabled = false
+            val candidates = _subtitles.value.filter { it.name != subtitle.name }
+            val preferred = secondaryLanguage
+            val pick = candidates.firstOrNull { preferred != null && it.language == preferred }
+                ?: candidates.firstOrNull { it.language != null && it.language != subtitle.language }
+                ?: candidates.firstOrNull()
+            if (pick != null) loadSecondaryCues(pick) else clearSecondarySubtitle()
+        }
+    }
+
+    /** 选择副字幕；传 null 关闭副字幕（本次播放页内不再自动选择） */
+    fun selectSecondarySubtitle(name: String?) {
+        if (!_dualSubtitleEnabled.value) return
+        if (name == null) {
+            secondaryDisabled = true
+            clearSecondarySubtitle()
+            return
+        }
+        val subtitle = _subtitles.value.firstOrNull { it.name == name } ?: return
+        if (subtitle.name == selectedSubtitleName.value) {
+            secondaryDisabled = true
+            clearSecondarySubtitle()
+            return
+        }
+        secondaryDisabled = false
+        secondaryLanguage = subtitle.language
+        loadSecondaryCues(subtitle)
+    }
+
+    /** 起播/切集后决定副字幕：优先沿用上次语言，其次语言不同于主字幕，最后取第二条 */
+    private suspend fun prepareSecondarySubtitle(subtitles: List<SubtitleInfo>, isAudio: Boolean) {
+        if (isAudio || !_dualSubtitleEnabled.value || secondaryDisabled || subtitles.isEmpty()) {
+            clearSecondarySubtitle()
+            return
+        }
+        val primaryName = playerService.selectedSubtitleName.value ?: subtitles.firstOrNull()?.name
+        val candidates = subtitles.filter { it.name != primaryName }
+        if (candidates.isEmpty()) {
+            clearSecondarySubtitle()
+            return
+        }
+        val primaryLanguage = subtitles.firstOrNull { it.name == primaryName }?.language
+        val preferred = secondaryLanguage
+        val pick = candidates.firstOrNull { preferred != null && it.language == preferred }
+            ?: candidates.firstOrNull { it.language != null && it.language != primaryLanguage }
+            ?: candidates.firstOrNull()
+            ?: return
+        loadSecondaryCues(pick)
+    }
+
+    private fun loadSecondaryCues(subtitle: SubtitleInfo) {
+        secondaryJob?.cancel()
+        _secondarySubtitle.value = null
+        secondaryJob = viewModelScope.launch {
+            val config = webDavConfigRepository.getActiveConfig() ?: return@launch
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    WebDavClient(config).download(subtitle.path)?.use { it.readBytes() }
+                }.getOrNull()
+            }
+            if (bytes == null) return@launch
+            val cues = runCatching {
+                SubtitleParser.parse(subtitle.format, SubtitleTextDecoder.decode(bytes))
+            }.getOrDefault(emptyList())
+            if (cues.isEmpty()) return@launch
+            if (secondaryLanguage == null && subtitle.language != null) {
+                secondaryLanguage = subtitle.language
+            }
+            _secondarySubtitle.value = SecondarySubtitle(subtitle.name, subtitle.language, cues)
+        }
+    }
+
+    private fun clearSecondarySubtitle() {
+        secondaryJob?.cancel()
+        secondaryJob = null
+        _secondarySubtitle.value = null
     }
 
     fun disableSubtitles() {

@@ -3,6 +3,7 @@ package com.tvplayer.webdav
 import com.tvplayer.core.model.FileInfo
 import com.tvplayer.core.model.WebDavConfig
 import okhttp3.Credentials
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -157,7 +158,12 @@ class WebDavClient(private val config: WebDavConfig) {
     }
 
     suspend fun download(path: String): InputStream? {
-        val url = "$baseUrl/${path.trimStart('/')}"
+        // 逐段编码：字幕路径常含中文、空格和 emoji
+        val url = baseUrl.toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addPathSegments(path.trimStart('/'))
+            ?.build()
+            ?: return null
         val request = Request.Builder()
             .url(url)
             .header("Authorization", Credentials.basic(config.username, config.password))

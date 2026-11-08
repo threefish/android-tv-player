@@ -30,12 +30,19 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
-import com.tvplayer.app.ui.component.AppIconButton
+import com.tvplayer.app.ui.component.AppButton
+import com.tvplayer.app.ui.component.AppButtonDefaults
 import com.tvplayer.app.ui.component.AppListRow
+import com.tvplayer.app.ui.component.DrawerSectionTitle
+import com.tvplayer.app.ui.component.FloatingIconButton
+import com.tvplayer.app.ui.component.SideDrawer
+import com.tvplayer.app.ui.component.floatingCorner
 import com.tvplayer.app.ui.player.VideoPlayerActivity
 import com.tvplayer.app.ui.theme.AppColors
 import com.tvplayer.app.ui.theme.AppShapes
@@ -60,6 +67,14 @@ fun FileBrowserPage(
     var contextMenuFile by remember { mutableStateOf<FileInfo?>(null) }
     var focusedFile by remember { mutableStateOf<FileInfo?>(null) }
     var showSyncResult by remember { mutableStateOf(false) }
+    var showPageDrawer by remember { mutableStateOf(false) }
+    // 打开抽屉时快照当前选中项，抽屉弹出后焦点变化不影响已展示的操作
+    var drawerFile by remember { mutableStateOf<FileInfo?>(null) }
+    val drawerFirstFocus = remember { FocusRequester() }
+    val openPageDrawer: () -> Unit = {
+        drawerFile = focusedFile
+        showPageDrawer = true
+    }
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val itemFocusRequester = remember { FocusRequester() }
@@ -136,6 +151,22 @@ fun FileBrowserPage(
         }
     }
 
+    // 结果条短暂展示后自动收起
+    LaunchedEffect(syncState, showSyncResult) {
+        if (!showSyncResult) return@LaunchedEffect
+        when (syncState) {
+            is SyncService.SyncState.Completed -> {
+                kotlinx.coroutines.delay(3000)
+                showSyncResult = false
+            }
+            is SyncService.SyncState.Error -> {
+                kotlinx.coroutines.delay(5000)
+                showSyncResult = false
+            }
+            else -> {}
+        }
+    }
+
     LaunchedEffect(addToHomeResult) {
         if (addToHomeResult != null) {
             kotlinx.coroutines.delay(2000)
@@ -147,97 +178,15 @@ fun FileBrowserPage(
         modifier = Modifier
             .fillMaxSize()
             .onKeyEvent { event ->
-                // 遥控器无法触发触摸长按，用菜单键打开当前聚焦项的上下文菜单
-                if (event.key == Key.Menu && event.type == KeyEventType.KeyDown && contextMenuFile == null) {
-                    focusedFile?.let {
-                        contextMenuFile = it
-                        true
-                    } ?: false
+                // 菜单键打开页面抽屉，目录操作与当前选中项操作都在这里
+                if (event.key == Key.Menu && event.type == KeyEventType.KeyDown) {
+                    openPageDrawer()
+                    true
                 } else {
                     false
                 }
             }
     ) {
-        // Page header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.xxxl, vertical = Spacing.md),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.md)
-        ) {
-            if (currentPath != "/") {
-                AppIconButton(onClick = { viewModel.navigateToParent() }) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "返回",
-                        tint = AppColors.listHeadline
-                    )
-                }
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "视频",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = AppColors.listHeadline
-                )
-                Text(
-                    text = currentPath,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AppColors.listCaption
-                )
-            }
-
-            // 同步中的路径提示与同步按钮放在同一容器里，避免底部浮层遮挡列表
-            Row(
-                modifier = Modifier.background(
-                    if (syncing != null) AppColors.surfaceVariant else Color.Transparent,
-                    AppShapes.medium,
-                ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (syncing != null) {
-                    Text(
-                        text = "同步中 · " + syncing.path.trimEnd('/').substringAfterLast('/')
-                            .ifEmpty { "根目录" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = AppColors.listCaption,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .widthIn(max = 220.dp)
-                            .padding(start = Spacing.md, end = Spacing.sm),
-                    )
-                }
-
-                // 同步中保持可聚焦：禁用会让方向键把焦点甩到顶部 Tab 栏并误切页
-                AppIconButton(onClick = { viewModel.sync() }) {
-                    if (syncing != null) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
-                            color = AppColors.primary
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.Sync,
-                            contentDescription = "同步",
-                            tint = AppColors.listHeadline
-                        )
-                    }
-                }
-            }
-
-            AppIconButton(onClick = { viewModel.refresh() }) {
-                Icon(
-                    Icons.Default.Refresh,
-                    contentDescription = "刷新",
-                    tint = AppColors.listHeadline
-                )
-            }
-        }
-
         // Content
         Box(
             modifier = Modifier.weight(1f)
@@ -245,8 +194,13 @@ fun FileBrowserPage(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(horizontal = Spacing.xxxl, vertical = Spacing.md),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                contentPadding = PaddingValues(
+                    start = 56.dp,
+                    end = 56.dp,
+                    top = 12.dp,
+                    bottom = 24.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 itemsIndexed(files) { index, file ->
                     FileItem(
@@ -271,6 +225,9 @@ fun FileBrowserPage(
                         onFocused = {
                             focusedFile = file
                         },
+                        onBlur = {
+                            if (focusedFile?.path == file.path) focusedFile = null
+                        },
                         onMenuDismiss = {
                             contextMenuFile = null
                         },
@@ -286,55 +243,6 @@ fun FileBrowserPage(
                 }
             }
 
-            // 同步结果短暂提示（进行中的状态显示在顶部同步按钮旁）
-            when (val state = syncState) {
-                is SyncService.SyncState.Completed -> {
-                    if (showSyncResult) {
-                        LaunchedEffect(state) {
-                            kotlinx.coroutines.delay(3000)
-                            showSyncResult = false
-                        }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(Spacing.md)
-                                .background(AppColors.surfaceVariant, AppShapes.medium)
-                        ) {
-                            Text(
-                                buildString {
-                                    append("同步完成: ${state.fileCount} 个文件")
-                                    if (state.removedCount > 0) append("，清理 ${state.removedCount} 项")
-                                    if (state.failedCount > 0) append("，${state.failedCount} 项失败")
-                                },
-                                modifier = Modifier.padding(Spacing.md),
-                                color = if (state.failedCount > 0) AppColors.error else AppColors.primary
-                            )
-                        }
-                    }
-                }
-                is SyncService.SyncState.Error -> {
-                    if (showSyncResult) {
-                        LaunchedEffect(state) {
-                            kotlinx.coroutines.delay(5000)
-                            showSyncResult = false
-                        }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(Spacing.md)
-                                .background(AppColors.surfaceVariant, AppShapes.medium)
-                        ) {
-                            Text(
-                                "同步失败: ${state.message}",
-                                modifier = Modifier.padding(Spacing.md),
-                                color = AppColors.error
-                            )
-                        }
-                    }
-                }
-                else -> {}
-            }
-
             addToHomeResult?.let { msg ->
                 Snackbar(
                     modifier = Modifier
@@ -346,7 +254,205 @@ fun FileBrowserPage(
                     Text(msg)
                 }
             }
+
+            FloatingIconButton(
+                onClick = openPageDrawer,
+                contentDescription = "页面菜单",
+                loading = syncing != null,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .floatingCorner(),
+            )
         }
+
+        // 同步状态条参与布局，不遮挡文件列表
+        val syncBar = when (val state = syncState) {
+            is SyncService.SyncState.Syncing -> SyncBarState(
+                text = buildString {
+                    append("同步中")
+                    val folder = state.path.trimEnd('/').substringAfterLast('/')
+                    if (folder.isNotEmpty() && folder != "准备同步") append(" · $folder")
+                    if (state.total > 0) append("  ${state.current}/${state.total}")
+                },
+                isError = false,
+                inProgress = true,
+            )
+            is SyncService.SyncState.Completed -> if (showSyncResult) SyncBarState(
+                text = buildString {
+                    append("同步完成: ${state.fileCount} 个文件")
+                    if (state.removedCount > 0) append("，清理 ${state.removedCount} 项")
+                    if (state.failedCount > 0) append("，${state.failedCount} 项失败")
+                },
+                isError = state.failedCount > 0,
+                inProgress = false,
+            ) else null
+            is SyncService.SyncState.Error -> if (showSyncResult) SyncBarState(
+                text = "同步失败: ${state.message}",
+                isError = true,
+                inProgress = false,
+            ) else null
+            else -> null
+        }
+        syncBar?.let { bar ->
+            SyncStatusBar(
+                text = bar.text,
+                isError = bar.isError,
+                inProgress = bar.inProgress,
+                modifier = Modifier.padding(start = 56.dp, end = 56.dp, bottom = 12.dp),
+            )
+        }
+    }
+
+    if (showPageDrawer) {
+        SideDrawer(
+            title = "视频",
+            subtitle = currentPath,
+            initialFocus = drawerFirstFocus,
+            onDismiss = { showPageDrawer = false },
+        ) {
+            DrawerSectionTitle("目录操作")
+            AppButton(
+                onClick = {
+                    showPageDrawer = false
+                    viewModel.sync()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(drawerFirstFocus),
+            ) {
+                Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(Spacing.sm))
+                Text(if (syncing != null) "同步中…" else "同步")
+            }
+            Spacer(Modifier.height(10.dp))
+            AppButton(
+                onClick = {
+                    showPageDrawer = false
+                    viewModel.refresh()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(Spacing.sm))
+                Text("刷新")
+            }
+            if (currentPath != "/") {
+                Spacer(Modifier.height(10.dp))
+                AppButton(
+                    onClick = {
+                        showPageDrawer = false
+                        viewModel.navigateToParent()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(Spacing.sm))
+                    Text("返回上级")
+                }
+            }
+
+            drawerFile?.let { file ->
+                Spacer(Modifier.height(20.dp))
+                DrawerSectionTitle("当前选中")
+                Text(
+                    text = file.name,
+                    fontSize = 15.sp,
+                    color = AppColors.listHeadline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(10.dp))
+                if (file.isDirectory) {
+                    AppButton(
+                        onClick = {
+                            showPageDrawer = false
+                            viewModel.addToHomeGrid(file.path)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            Icons.Default.Home,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(Spacing.sm))
+                        Text("绑定到首页")
+                    }
+                } else {
+                    AppButton(
+                        onClick = {
+                            showPageDrawer = false
+                            viewModel.deleteFile(file.path)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = AppButtonDefaults.dangerColors(),
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(Spacing.sm))
+                        Text("删除文件")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class SyncBarState(
+    val text: String,
+    val isError: Boolean,
+    val inProgress: Boolean,
+)
+
+@Composable
+private fun SyncStatusBar(
+    text: String,
+    isError: Boolean,
+    inProgress: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(AppColors.surfaceVariant, AppShapes.medium)
+            .padding(horizontal = Spacing.md, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when {
+            inProgress -> CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = AppColors.primary,
+            )
+            isError -> Icon(
+                Icons.Default.ErrorOutline,
+                contentDescription = null,
+                tint = AppColors.error,
+                modifier = Modifier.size(18.dp),
+            )
+            else -> Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = AppColors.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(Spacing.sm))
+        Text(
+            text = text,
+            modifier = Modifier.weight(1f),
+            color = if (isError) AppColors.error else AppColors.listHeadline,
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -360,6 +466,7 @@ private fun FileItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onFocused: () -> Unit,
+    onBlur: () -> Unit,
     onMenuDismiss: () -> Unit,
     onBindToHome: () -> Unit,
     onDeleteFile: () -> Unit
@@ -378,14 +485,14 @@ private fun FileItem(
         onLongClick = onLongClick,
         modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { if (it.isFocused) onFocused() },
+            .onFocusChanged { if (it.isFocused) onFocused() else onBlur() },
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(Spacing.md),
+                .padding(horizontal = 28.dp, vertical = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+            horizontalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Icon(
                 imageVector = when {
@@ -394,7 +501,7 @@ private fun FileItem(
                     else -> Icons.AutoMirrored.Filled.InsertDriveFile
                 },
                 contentDescription = null,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(36.dp),
                 tint = when {
                     file.isDirectory -> AppColors.primary
                     file.isAudio -> AppColors.primary
@@ -404,21 +511,25 @@ private fun FileItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = file.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = AppColors.listHeadline
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = AppColors.listHeadline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (!file.isDirectory) {
                     Text(
                         text = formatFileSize(file.size),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = AppColors.listCaption
+                        fontSize = 14.sp,
+                        color = AppColors.listCaption,
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
             }
             if (!file.isDirectory && playCount > 0) {
                 Text(
                     text = "播放 $playCount 次",
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 14.sp,
                     color = AppColors.listCaption
                 )
             }

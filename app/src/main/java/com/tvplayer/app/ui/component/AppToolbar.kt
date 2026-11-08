@@ -1,5 +1,8 @@
 package com.tvplayer.app.ui.component
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tv
@@ -26,18 +30,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.tvplayer.app.R
 import com.tvplayer.app.ui.theme.AppColors
-import com.tvplayer.app.ui.theme.AppTypography
 import kotlinx.coroutines.delay
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -45,10 +54,10 @@ import java.time.format.DateTimeFormatter
 @Composable
 private fun rememberCurrentTime(): String {
     val timeState = produceState(initialValue = "") {
-        val fmt = DateTimeFormatter.ofPattern("HH:mm")
+        val fmt = DateTimeFormatter.ofPattern("HH:mm:ss")
         while (true) {
             value = LocalTime.now().format(fmt)
-            delay(30_000)
+            delay(1_000)
         }
     }
     return timeState.value
@@ -78,22 +87,33 @@ fun AppToolbar(
 
     ToolbarLayout(
         modifier = modifier
-            .height(95.dp)
-            .padding(horizontal = 48.dp, vertical = 27.dp),
+            .height(80.dp)
+            .background(Color(0x660D111A))
+            .drawBehind {
+                drawLine(
+                    color = Color(0x0DFFFFFF),
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .padding(horizontal = 56.dp),
         start = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Icon(
                     imageVector = Icons.Default.Tv,
                     contentDescription = null,
+                    modifier = Modifier.size(30.dp),
                     tint = AppColors.primary,
                 )
                 Text(
                     text = stringResource(R.string.app_name),
-                    style = AppTypography.titleMedium,
-                    color = AppColors.listHeader,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.textPrimary,
                 )
             }
         },
@@ -101,8 +121,11 @@ fun AppToolbar(
             Row(
                 modifier = Modifier
                     .focusGroup()
-                    .focusRequester(centerFocusRequester),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .focusRequester(centerFocusRequester)
+                    .background(AppColors.navBackground, CircleShape)
+                    .border(1.dp, Color(0x14FFFFFF), CircleShape)
+                    .padding(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 tabs.forEachIndexed { index, label ->
@@ -135,8 +158,10 @@ private fun ToolbarClock() {
     val time = rememberCurrentTime()
     Text(
         text = time,
-        fontSize = 20.sp,
-        color = Color.White,
+        fontSize = 24.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = AppColors.textPrimary,
+        letterSpacing = 1.sp,
     )
 }
 
@@ -151,21 +176,44 @@ private fun ToolbarTab(
 ) {
     val focused by interactionSource.collectIsFocusedAsState()
     val shape = CircleShape
-    // 激活态持续标识当前页；聚焦态叠加白色描边，两种状态可同时辨认
-    val containerColor = when {
-        active -> AppColors.primary
-        focused -> AppColors.buttonFocused
-        else -> AppColors.button
-    }
-    val contentColor = when {
-        active -> AppColors.background
-        focused -> AppColors.onButtonFocused
-        else -> AppColors.onButton
-    }
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            focused -> Color.White
+            active -> Color(0x26FFFFFF)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(150),
+        label = "tabContainer",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            focused -> Color.Black
+            active -> Color.White
+            else -> AppColors.textMuted
+        },
+        animationSpec = tween(150),
+        label = "tabContent",
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.04f else 1f,
+        animationSpec = tween(150),
+        label = "tabScale",
+    )
 
     Row(
         modifier = modifier
-            .defaultMinSize(minWidth = 58.dp, minHeight = 40.dp)
+            .zIndex(if (focused) 1f else 0f)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .defaultMinSize(minWidth = 58.dp, minHeight = 46.dp)
+            .shadow(
+                elevation = if (focused) 16.dp else 0.dp,
+                shape = shape,
+                ambientColor = AppColors.focusShadow,
+                spotColor = AppColors.focusShadow,
+            )
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -173,16 +221,16 @@ private fun ToolbarTab(
                 onClick = onClick,
             )
             .background(containerColor, shape)
-            .then(if (active && focused) Modifier.border(2.dp, Color.White, shape) else Modifier)
-            .padding(AppButtonDefaults.ContentPadding),
+            .clip(shape)
+            .padding(horizontal = 32.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 17.sp,
             color = contentColor,
         )
     }
@@ -196,7 +244,8 @@ private fun ToolbarLayout(
     end: @Composable () -> Unit = {},
 ) = SubcomposeLayout(modifier = modifier) { constraints ->
     val sideMaxWidth = constraints.maxWidth / 3
-    val sideConstraints = constraints.copy(minWidth = 0, maxWidth = sideMaxWidth)
+    // 松开固定高度，否则侧边内容会被撑满整条工具栏，文字只能顶在上沿
+    val sideConstraints = constraints.copy(minWidth = 0, minHeight = 0, maxWidth = sideMaxWidth)
 
     val startPlaceables = subcompose("start", start).map { it.measure(sideConstraints) }
     val endPlaceables = subcompose("end", end).map { it.measure(sideConstraints) }
@@ -208,13 +257,9 @@ private fun ToolbarLayout(
 
     val centerMaxWidth = (constraints.maxWidth - 2 * sideWidth).coerceAtLeast(0)
     val centerPlaceables = subcompose("center", center)
-        .map { it.measure(constraints.copy(minWidth = 0, maxWidth = centerMaxWidth)) }
+        .map { it.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = centerMaxWidth)) }
 
-    val height = listOf(
-        startPlaceables.maxOfOrNull { it.height } ?: 0,
-        centerPlaceables.maxOfOrNull { it.height } ?: 0,
-        endPlaceables.maxOfOrNull { it.height } ?: 0,
-    ).maxOrNull() ?: 0
+    val height = constraints.maxHeight
 
     layout(constraints.maxWidth, height) {
         startPlaceables.forEach { it.placeRelative(0, (height - it.height) / 2) }

@@ -40,8 +40,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -66,6 +68,7 @@ import com.tvplayer.app.ui.theme.AppColors
 import com.tvplayer.app.ui.theme.Spacing
 import com.tvplayer.player.PlayerEngine
 import com.tvplayer.player.PlayerService
+import com.tvplayer.player.SubtitleParser
 import kotlinx.coroutines.delay
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -92,6 +95,9 @@ fun VideoPlayerScreen(
     val transition by viewModel.transition.collectAsState()
     val engine by viewModel.engine.collectAsState()
     val selectedSubtitleName by viewModel.selectedSubtitleName.collectAsState()
+    val secondarySubtitle by viewModel.secondarySubtitle.collectAsState()
+    val dualSubtitleEnabled by viewModel.dualSubtitleEnabled.collectAsState()
+    val seekStepSeconds by viewModel.seekStepSeconds.collectAsState()
     val isAudio by viewModel.isAudio.collectAsState()
     val finished by viewModel.finished.collectAsState()
     val loadError by viewModel.loadError.collectAsState()
@@ -118,6 +124,8 @@ fun VideoPlayerScreen(
     var focusControlsTick by remember { mutableIntStateOf(0) }
     var focusPauseButtonOnPause by remember { mutableStateOf(false) }
     var focusedSubtitleRow by remember { mutableIntStateOf(-1) }
+    // 0=主字幕，1=副字幕
+    var subtitleMode by remember { mutableIntStateOf(0) }
     var finishedBackFocused by remember { mutableStateOf(false) }
     var interactionTick by remember { mutableIntStateOf(0) }
     var pauseRest by remember { mutableStateOf(false) }
@@ -315,6 +323,7 @@ fun VideoPlayerScreen(
     LaunchedEffect(showSubtitleDialog) {
         if (showSubtitleDialog) {
             focusedSubtitleRow = -1
+            subtitleMode = 0
             withFrameNanos { }
             runCatching { subtitleDialogFocusRequester.requestFocus() }
         } else if (!resumeDialogVisible && !showMenu && !showPlaylist) {
@@ -456,7 +465,7 @@ fun VideoPlayerScreen(
                     }
                     event.key == Key.DirectionLeft || event.key == Key.DirectionRight -> {
                         if (isDown && !finished && !showMenu && !resumeDialogVisible && !showSubtitleDialog && !showPlaylist) {
-                            val step = if (seekRepeat > 2) 60_000L else 10_000L
+                            val step = if (seekRepeat > 2) 60_000L else seekStepSeconds * 1000L
                             seekRepeat++
                             seekBy(if (event.key == Key.DirectionRight) step else -step)
                         }
@@ -546,6 +555,42 @@ fun VideoPlayerScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+            }
+        }
+
+        // 副字幕由引擎之外自行渲染：引擎单次只能显示一条文本轨
+        val secondaryText = secondarySubtitle
+            ?.takeIf { dualSubtitleEnabled && !isAudio && !finished && loadError == null && restMessage == null }
+            ?.let { SubtitleParser.cueAt(it.cues, currentPosition)?.text }
+        if (!secondaryText.isNullOrBlank()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(
+                        start = 48.dp,
+                        end = 48.dp,
+                        bottom = if (selectedSubtitleName != null) (56f + 40f * subtitleSize).dp else 28.dp
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = secondaryText,
+                    color = Color.White,
+                    fontSize = (20f * subtitleSize).sp,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        shadow = Shadow(
+                            color = Color.Black,
+                            offset = Offset(0f, 2f),
+                            blurRadius = 6f
+                        )
+                    ),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x8C000000))
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                )
             }
         }
 
@@ -1307,9 +1352,11 @@ fun VideoPlayerScreen(
         }
         // 字幕选择弹窗与播放页同窗口，保证遥控器焦点可控
         if (showSubtitleDialog) {
-            val selectedSubtitleIndex = subtitles.indexOfFirst { it.name == selectedSubtitleName }
+            val primarySelectedIndex = subtitles.indexOfFirst { it.name == selectedSubtitleName }
+            val secondarySelectedIndex = subtitles.indexOfFirst { it.name == secondarySubtitle?.name }
             val initialSubtitleRow = when {
-                selectedSubtitleIndex >= 0 -> selectedSubtitleIndex + 1
+                subtitleMode == 0 && primarySelectedIndex >= 0 -> primarySelectedIndex + 1
+                subtitleMode == 1 && secondarySelectedIndex >= 0 -> secondarySelectedIndex + 1
                 subtitles.isNotEmpty() -> 1
                 else -> 0
             }
@@ -1322,8 +1369,10 @@ fun VideoPlayerScreen(
                     .onKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                         when (event.key) {
-                            Key.DirectionLeft, Key.DirectionRight -> true
-                            Key.DirectionUp -> focusedSubtitleRow <= 0
+                            // 主副切换用左右键，行内左右不留给焦点搜索
+                            Key.DirectionLeft, Key.DirectionRight -> focusedSubtitleRow != -1
+                            // 第一行按上进入模式选择，模式按钮上按上不再逃出弹窗
+                            Key.DirectionUp -> focusedSubtitleRow == -1
                             Key.DirectionDown -> focusedSubtitleRow >= subtitles.size
                             Key.Back -> {
                                 showSubtitleDialog = false
@@ -1336,20 +1385,47 @@ fun VideoPlayerScreen(
             ) {
                 Card(
                     modifier = Modifier
-                        .width(640.dp)
-                        .heightIn(max = 560.dp),
+                        .width(680.dp)
+                        .heightIn(max = 600.dp),
                     colors = CardDefaults.cardColors(containerColor = AppColors.playerScrim),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)
                     ) {
                         Text(
-                            text = "选择字幕",
+                            text = "字幕设置",
                             color = Color.White,
                             style = MaterialTheme.typography.titleLarge
                         )
                         Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            SubtitleModeChip(
+                                label = "主字幕",
+                                selected = subtitleMode == 0,
+                                enabled = true,
+                                onFocused = { focusedSubtitleRow = -1 },
+                                onClick = { subtitleMode = 0 }
+                            )
+                            SubtitleModeChip(
+                                label = "副字幕",
+                                selected = subtitleMode == 1,
+                                enabled = dualSubtitleEnabled,
+                                onFocused = { focusedSubtitleRow = -1 },
+                                onClick = { subtitleMode = 1 }
+                            )
+                            if (!dualSubtitleEnabled) {
+                                Text(
+                                    text = "双字幕未开启，请在设置中打开",
+                                    color = Color(0x99FFFFFF),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1357,30 +1433,54 @@ fun VideoPlayerScreen(
                                 .verticalScroll(rememberScrollState())
                         ) {
                             SubtitleOptionRow(
-                                label = "关闭字幕",
+                                label = if (subtitleMode == 0) "关闭字幕" else "关闭副字幕",
                                 trailing = "",
-                                selected = selectedSubtitleName == null,
+                                selected = if (subtitleMode == 0) {
+                                    selectedSubtitleName == null
+                                } else {
+                                    secondarySubtitle == null
+                                },
                                 focusRequester = if (initialSubtitleRow == 0) subtitleDialogFocusRequester else null,
                                 onFocused = { focusedSubtitleRow = 0 },
                                 onClick = {
-                                    viewModel.disableSubtitles()
+                                    if (subtitleMode == 0) {
+                                        viewModel.disableSubtitles()
+                                    } else {
+                                        viewModel.selectSecondarySubtitle(null)
+                                    }
                                     showSubtitleDialog = false
                                 }
                             )
                             subtitles.forEachIndexed { index, subtitle ->
+                                // 同一字幕不能同时充当主/副字幕，标出另一轨当前占用的条目
+                                val occupiesOtherTrack = if (subtitleMode == 0) {
+                                    subtitle.name == secondarySubtitle?.name
+                                } else {
+                                    subtitle.name == selectedSubtitleName
+                                }
+                                val selected = if (subtitleMode == 0) {
+                                    selectedSubtitleName == subtitle.name
+                                } else {
+                                    secondarySubtitle?.name == subtitle.name
+                                }
                                 SubtitleOptionRow(
                                     label = subtitle.name,
-                                    trailing = listOfNotNull(
-                                        subtitle.language,
-                                        if (subtitle.isExact) "同名" else "智能匹配"
-                                    ).joinToString(" · "),
-                                    selected = selectedSubtitleName == subtitle.name,
+                                    trailing = buildList {
+                                        subtitle.language?.let { add(it) }
+                                        add(if (subtitle.isExact) "同名" else "智能匹配")
+                                        if (occupiesOtherTrack) add(if (subtitleMode == 0) "当前副字幕" else "当前主字幕")
+                                    }.joinToString(" · "),
+                                    selected = selected,
                                     focusRequester = if (initialSubtitleRow == index + 1) {
                                         subtitleDialogFocusRequester
                                     } else null,
                                     onFocused = { focusedSubtitleRow = index + 1 },
                                     onClick = {
-                                        viewModel.selectSubtitle(index)
+                                        if (subtitleMode == 0) {
+                                            viewModel.selectSubtitle(index)
+                                        } else {
+                                            viewModel.selectSecondarySubtitle(subtitle.name)
+                                        }
                                         showSubtitleDialog = false
                                     }
                                 )
@@ -1552,6 +1652,57 @@ private fun formatSpeed(bytesPerSec: Long): String {
         bytesPerSec < 1024 -> "$bytesPerSec B/s"
         bytesPerSec < 1024 * 1024 -> String.format("%.1f KB/s", bytesPerSec / 1024.0)
         else -> String.format("%.1f MB/s", bytesPerSec / (1024.0 * 1024.0))
+    }
+}
+
+@Composable
+private fun SubtitleModeChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    onFocused: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
+    val background = when {
+        focused -> Color.White
+        selected -> AppColors.accent
+        else -> Color(0x1FFFFFFF)
+    }
+    val contentColor = when {
+        focused -> Color(0xFF1C2026)
+        selected -> Color.White
+        enabled -> Color(0xCCFFFFFF)
+        else -> Color(0x66FFFFFF)
+    }
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(background)
+            .then(
+                if (selected && !focused) {
+                    Modifier.border(1.dp, AppColors.accentSoft, RoundedCornerShape(18.dp))
+                } else {
+                    Modifier
+                }
+            )
+            .onFocusChanged { if (it.isFocused) onFocused() }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick
+            )
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = contentColor,
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 

@@ -30,6 +30,10 @@ class SettingsViewModel @Inject constructor(
     private val _isTesting = MutableStateFlow(false)
     val isTesting: StateFlow<Boolean> = _isTesting.asStateFlow()
 
+    /** null=尚未测试，true=连接正常，false=连接失败 */
+    private val _connectionStatus = MutableStateFlow<Boolean?>(null)
+    val connectionStatus: StateFlow<Boolean?> = _connectionStatus.asStateFlow()
+
     private val _toastMessage = MutableStateFlow<String?>(null)
     val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
 
@@ -85,6 +89,7 @@ class SettingsViewModel @Inject constructor(
                     _toastMessage.value = "未配置文件来源，请先新增"
                 } else {
                     val success = webDavConfigRepository.testConnection(config)
+                    _connectionStatus.value = success
                     _toastMessage.value = if (success) {
                         "连接成功"
                     } else {
@@ -92,6 +97,7 @@ class SettingsViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
+                _connectionStatus.value = false
                 _toastMessage.value = "连接失败: ${e.message}"
                 android.util.Log.e("SettingsVM", "testConnection exception", e)
             } finally {
@@ -105,6 +111,7 @@ class SettingsViewModel @Inject constructor(
             val config = _webDavConfig.value ?: return@launch
             webDavConfigRepository.save(config.copy(isEnabled = false))
             _webDavConfig.value = null
+            _connectionStatus.value = null
         }
     }
 
@@ -113,6 +120,7 @@ class SettingsViewModel @Inject constructor(
             webDavConfigRepository.save(config)
             // 新增后重新读取，确保拿到数据库生成的真实 id
             _webDavConfig.value = webDavConfigRepository.getActiveConfig()
+            _connectionStatus.value = null
         }
     }
 

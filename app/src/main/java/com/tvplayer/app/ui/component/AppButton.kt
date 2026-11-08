@@ -1,7 +1,10 @@
 package com.tvplayer.app.ui.component
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
@@ -23,9 +27,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.tvplayer.app.ui.theme.AppColors
 
 @Immutable
@@ -39,8 +44,8 @@ data class AppButtonColors(
 )
 
 object AppButtonDefaults {
-    val Shape: Shape = CircleShape
-    val ContentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+    val Shape: Shape = RoundedCornerShape(10.dp)
+    val ContentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
     val IconContentPadding: PaddingValues = PaddingValues(horizontal = 10.dp, vertical = 10.dp)
 
     fun colors(
@@ -58,6 +63,12 @@ object AppButtonDefaults {
         disabledContainerColor = disabledContainerColor,
         disabledContentColor = disabledContentColor,
     )
+
+    fun dangerColors() = colors(
+        contentColor = AppColors.danger,
+        focusedContainerColor = AppColors.dangerFocused,
+        focusedContentColor = Color.White,
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -69,6 +80,7 @@ fun AppButton(
     enabled: Boolean = true,
     shape: Shape = AppButtonDefaults.Shape,
     colors: AppButtonColors = AppButtonDefaults.colors(),
+    borderColor: Color = Color(0x26FFFFFF),
     contentPadding: PaddingValues = AppButtonDefaults.ContentPadding,
     interactionSource: MutableInteractionSource? = null,
     content: @Composable RowScope.() -> Unit,
@@ -76,16 +88,26 @@ fun AppButton(
     val src = interactionSource ?: remember { MutableInteractionSource() }
     val focused by src.collectIsFocusedAsState()
     val pressed by src.collectIsPressedAsState()
+    val active = focused || pressed
+    val scale by animateFloatAsState(
+        targetValue = if (active) 1.05f else 1f,
+        animationSpec = tween(150),
+        label = "buttonScale",
+    )
 
     val (bg, fg) = when {
         !enabled -> colors.disabledContainerColor to colors.disabledContentColor
-        pressed -> colors.focusedContainerColor to colors.focusedContentColor
-        focused -> colors.focusedContainerColor to colors.focusedContentColor
+        active -> colors.focusedContainerColor to colors.focusedContentColor
         else -> colors.containerColor to colors.contentColor
     }
 
     Row(
         modifier = modifier
+            .zIndex(if (active) 1f else 0f)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .defaultMinSize(minWidth = 58.dp, minHeight = 40.dp)
             .combinedClickable(
                 interactionSource = src,
@@ -96,6 +118,9 @@ fun AppButton(
                 onLongClick = onLongClick,
             )
             .background(bg, shape)
+            .then(
+                if (active) Modifier else Modifier.border(1.dp, borderColor, shape)
+            )
             .clip(shape)
             .padding(contentPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -116,8 +141,9 @@ fun AppIconButton(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
-    shape: Shape = AppButtonDefaults.Shape,
+    shape: Shape = CircleShape,
     colors: AppButtonColors = AppButtonDefaults.colors(),
+    borderColor: Color = Color(0x26FFFFFF),
     contentPadding: PaddingValues = AppButtonDefaults.IconContentPadding,
     interactionSource: MutableInteractionSource? = null,
     content: @Composable BoxScope.() -> Unit,
@@ -125,16 +151,26 @@ fun AppIconButton(
     val src = interactionSource ?: remember { MutableInteractionSource() }
     val focused by src.collectIsFocusedAsState()
     val pressed by src.collectIsPressedAsState()
+    val active = focused || pressed
+    val scale by animateFloatAsState(
+        targetValue = if (active) 1.08f else 1f,
+        animationSpec = tween(150),
+        label = "iconButtonScale",
+    )
 
     val (bg, fg) = when {
         !enabled -> colors.disabledContainerColor to colors.disabledContentColor
-        pressed -> colors.focusedContainerColor to colors.focusedContentColor
-        focused -> colors.focusedContainerColor to colors.focusedContentColor
+        active -> colors.focusedContainerColor to colors.focusedContentColor
         else -> colors.containerColor to colors.contentColor
     }
 
     Box(
         modifier = modifier
+            .zIndex(if (active) 1f else 0f)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .combinedClickable(
                 interactionSource = src,
                 indication = null,
@@ -144,13 +180,20 @@ fun AppIconButton(
                 onLongClick = onLongClick,
             )
             .background(bg, shape)
+            .then(
+                if (active) Modifier else Modifier.border(1.dp, borderColor, shape)
+            )
             .clip(shape)
             .padding(contentPadding),
     ) {
-        androidx.compose.material3.ProvideTextStyle(
-            value = androidx.compose.material3.MaterialTheme.typography.labelLarge.copy(color = fg)
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides fg
         ) {
-            content()
+            androidx.compose.material3.ProvideTextStyle(
+                value = androidx.compose.material3.MaterialTheme.typography.labelLarge.copy(color = fg)
+            ) {
+                content()
+            }
         }
     }
 }

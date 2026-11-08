@@ -36,13 +36,13 @@
     </td>
     <td align="center">
       <img src="docs/screenshots/app-files.png" width="430" alt="电视端文件浏览列表"><br>
-      <sub>文件浏览：本地索引直出目录与文件大小，不卡网络</sub>
+      <sub>视频列表：本地索引直出目录与文件大小，同步与刷新收进右下角抽屉</sub>
     </td>
   </tr>
   <tr>
     <td align="center">
       <img src="docs/screenshots/app-player.png" width="430" alt="电视端播放控制菜单"><br>
-      <sub>菜单键唤出播放控制：上下集、倍速、画面缩放、字幕大小</sub>
+      <sub>菜单键唤出播放控制：播放列表、上下集、倍速、画面缩放、字幕</sub>
     </td>
     <td align="center">
       <img src="docs/screenshots/app-controls.png" width="430" alt="电视端底部操作栏焦点高亮"><br>

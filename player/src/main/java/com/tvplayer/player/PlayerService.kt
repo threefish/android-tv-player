@@ -263,6 +263,8 @@ class PlayerService @Inject constructor(
             exoPlayer.prepare()
             exoPlayer.seekTo(startPosition)
             exoPlayer.volume = volumeLevel
+            // 播放器实例跨视频复用，起播时显式恢复用户设置的倍速
+            exoPlayer.setPlaybackSpeed(_playbackSpeed.value)
             exoPlayer.playWhenReady = true
         }
     }
@@ -663,12 +665,16 @@ class PlayerService @Inject constructor(
 
     private val speedSteps = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
+    fun setPlaybackSpeed(speed: Float) {
+        _playbackSpeed.value = speed
+        player?.setPlaybackSpeed(speed)
+        vlcPlayer?.rate = speed
+    }
+
     fun cyclePlaybackSpeed() {
         val currentIdx = speedSteps.indexOf(_playbackSpeed.value)
         val nextIdx = (currentIdx + 1) % speedSteps.size
-        _playbackSpeed.value = speedSteps[nextIdx]
-        player?.setPlaybackSpeed(_playbackSpeed.value)
-        vlcPlayer?.rate = _playbackSpeed.value
+        setPlaybackSpeed(speedSteps[nextIdx])
     }
 
     private val resizeModeSteps = listOf(0, 1, 2) // FIT, FILL, ZOOM
@@ -712,10 +718,14 @@ class PlayerService @Inject constructor(
 
     private val subtitleSizeSteps = listOf(0.8f, 1.0f, 1.2f, 1.5f, 2.0f)
 
+    fun setSubtitleSize(size: Float) {
+        _subtitleSize.value = size.coerceIn(0.5f, 3f)
+    }
+
     fun cycleSubtitleSize() {
         val currentIdx = subtitleSizeSteps.indexOf(_subtitleSize.value)
         val nextIdx = if (currentIdx < 0) 1 else (currentIdx + 1) % subtitleSizeSteps.size
-        _subtitleSize.value = subtitleSizeSteps[nextIdx]
+        setSubtitleSize(subtitleSizeSteps[nextIdx])
     }
 
     private fun updatePosition() {
