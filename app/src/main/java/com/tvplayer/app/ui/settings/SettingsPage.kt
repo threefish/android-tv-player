@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -57,160 +58,170 @@ fun SettingsPage(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = Spacing.xxxl, vertical = Spacing.lg),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = Spacing.xxxl, vertical = Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.lg)
     ) {
-        Text(
-            text = "设置",
-            style = MaterialTheme.typography.titleLarge,
-            color = AppColors.listHeadline
-        )
+        item {
+            Text(
+                text = "设置",
+                style = MaterialTheme.typography.titleLarge,
+                color = AppColors.listHeadline
+            )
+        }
 
         // File Sources + QR Code row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.lg)
-        ) {
-            // File Sources section
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.lg)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // File Sources section
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("文件来源", style = MaterialTheme.typography.titleMedium, color = AppColors.listHeadline)
-                    AppButton(onClick = { showEditDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp), tint = AppColors.onButton)
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text("新增")
-                    }
-                }
-
-                if (webDavConfig != null) {
-                    SourceRow(
-                        type = "WebDAV",
-                        url = webDavConfig!!.url,
-                        isTesting = isTesting,
-                        onTest = { viewModel.testConnection() },
-                        onEdit = { showEditDialog = true },
-                        onDelete = { showDeleteConfirm = true }
-                    )
-                } else {
-                    Text(
-                        "暂无文件来源，点击新增添加",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AppColors.listCaption
-                    )
-                }
-            }
-
-            // QR Code
-            Column(
-                modifier = Modifier.width(200.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                if (qrBitmap != null) {
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "Web管理二维码",
-                        modifier = Modifier.size(140.dp)
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.size(140.dp),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("二维码生成失败", style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption)
+                        Text("文件来源", style = MaterialTheme.typography.titleMedium, color = AppColors.listHeadline)
+                        AppButton(onClick = { showEditDialog = true }) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp), tint = AppColors.onButton)
+                            Spacer(Modifier.width(Spacing.xs))
+                            Text("新增")
+                        }
+                    }
+
+                    if (webDavConfig != null) {
+                        SourceRow(
+                            type = "WebDAV",
+                            url = webDavConfig!!.url,
+                            isTesting = isTesting,
+                            onTest = { viewModel.testConnection() },
+                            onEdit = { showEditDialog = true },
+                            onDelete = { showDeleteConfirm = true }
+                        )
+                    } else {
+                        Text(
+                            "暂无文件来源，点击新增添加",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = AppColors.listCaption
+                        )
                     }
                 }
-                Text("扫码访问Web管理", style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption)
-                Text(
-                    text = webUrl,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AppColors.listHeadline,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
+
+                // QR Code
+                Column(
+                    modifier = Modifier.width(200.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    if (qrBitmap != null) {
+                        Image(
+                            bitmap = qrBitmap.asImageBitmap(),
+                            contentDescription = "Web管理二维码",
+                            modifier = Modifier.size(140.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.size(140.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("二维码生成失败", style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption)
+                        }
+                    }
+                    Text("扫码访问Web管理", style = MaterialTheme.typography.bodySmall, color = AppColors.listCaption)
+                    Text(
+                        text = webUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppColors.listHeadline,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
         // Playback Settings
-        SettingsSection(title = "播放设置") {
-            SettingsRow("默认倍数") {
-                SpeedSelector(currentSpeed = playbackSpeed, onSpeedChange = viewModel::updatePlaybackSpeed)
-            }
-            SettingsRow("快进/快退步长") {
-                SeekStepSelector(currentStep = seekStep, onStepChange = viewModel::updateSeekStep)
+        item {
+            SettingsSection(title = "播放设置") {
+                SettingsRow("默认倍数") {
+                    SpeedSelector(currentSpeed = playbackSpeed, onSpeedChange = viewModel::updatePlaybackSpeed)
+                }
+                SettingsRow("快进/快退步长") {
+                    SeekStepSelector(currentStep = seekStep, onStepChange = viewModel::updateSeekStep)
+                }
             }
         }
 
         // Play Reminder
-        SettingsSection(title = "播放提醒") {
-            SettingsRow("启用播放提醒") {
-                Switch(
-                    checked = playReminder.enabled,
-                    onCheckedChange = { viewModel.updatePlayReminder(playReminder.copy(enabled = it)) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = AppColors.primary,
-                        checkedTrackColor = AppColors.primaryContainer,
-                        uncheckedThumbColor = AppColors.onSurfaceVariant,
-                        uncheckedTrackColor = AppColors.outline,
+        item {
+            SettingsSection(title = "播放提醒") {
+                SettingsRow("启用播放提醒") {
+                    Switch(
+                        checked = playReminder.enabled,
+                        onCheckedChange = { viewModel.updatePlayReminder(playReminder.copy(enabled = it)) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = AppColors.primary,
+                            checkedTrackColor = AppColors.primaryContainer,
+                            uncheckedThumbColor = AppColors.onSurfaceVariant,
+                            uncheckedTrackColor = AppColors.outline,
+                        )
                     )
-                )
-            }
-            SettingsRow("连续播放时长") {
-                MinutesSelector(
-                    currentMinutes = playReminder.playMinutes,
-                    options = listOf(1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240),
-                    onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(playMinutes = it)) }
-                )
-            }
-            SettingsRow("休息时长") {
-                MinutesSelector(
-                    currentMinutes = playReminder.restMinutes,
-                    options = listOf(1, 3, 5, 10, 15, 20, 30, 60),
-                    onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(restMinutes = it)) }
-                )
-            }
-            SettingsRow("休息结束后") {
-                ResumeModeSelector(
-                    autoResume = playReminder.autoResume,
-                    onModeChange = { viewModel.updatePlayReminder(playReminder.copy(autoResume = it)) }
-                )
+                }
+                SettingsRow("连续播放时长") {
+                    MinutesSelector(
+                        currentMinutes = playReminder.playMinutes,
+                        options = listOf(1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240),
+                        onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(playMinutes = it)) }
+                    )
+                }
+                SettingsRow("休息时长") {
+                    MinutesSelector(
+                        currentMinutes = playReminder.restMinutes,
+                        options = listOf(1, 3, 5, 10, 15, 20, 30, 60),
+                        onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(restMinutes = it)) }
+                    )
+                }
+                SettingsRow("休息结束后") {
+                    ResumeModeSelector(
+                        autoResume = playReminder.autoResume,
+                        onModeChange = { viewModel.updatePlayReminder(playReminder.copy(autoResume = it)) }
+                    )
+                }
             }
         }
 
         // Subtitle Settings
-        SettingsSection(title = "字幕设置") {
-            SettingsRow("字幕大小") {
-                SubtitleSizeSelector(currentSize = subtitleSize, onSizeChange = viewModel::updateSubtitleSize)
-            }
-            SettingsRow("双字幕开关") {
-                Switch(
-                    checked = dualSubtitle,
-                    onCheckedChange = { viewModel.toggleDualSubtitle() },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = AppColors.primary,
-                        checkedTrackColor = AppColors.primaryContainer,
-                        uncheckedThumbColor = AppColors.onSurfaceVariant,
-                        uncheckedTrackColor = AppColors.outline,
+        item {
+            SettingsSection(title = "字幕设置") {
+                SettingsRow("字幕大小") {
+                    SubtitleSizeSelector(currentSize = subtitleSize, onSizeChange = viewModel::updateSubtitleSize)
+                }
+                SettingsRow("双字幕开关") {
+                    Switch(
+                        checked = dualSubtitle,
+                        onCheckedChange = { viewModel.toggleDualSubtitle() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = AppColors.primary,
+                            checkedTrackColor = AppColors.primaryContainer,
+                            uncheckedThumbColor = AppColors.onSurfaceVariant,
+                            uncheckedTrackColor = AppColors.outline,
+                        )
                     )
-                )
+                }
             }
         }
 
         // About
-        SettingsSection(title = "关于") {
-            SettingsRow("版本") {
-                Text(viewModel.version, style = MaterialTheme.typography.bodyMedium, color = AppColors.listCaption)
+        item {
+            SettingsSection(title = "关于") {
+                SettingsRow("版本") {
+                    Text(viewModel.version, style = MaterialTheme.typography.bodyMedium, color = AppColors.listCaption)
+                }
             }
         }
     }

@@ -3,6 +3,7 @@ package com.tvplayer.app.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvplayer.core.model.PlayReminder
+import com.tvplayer.core.model.PlaybackSettings
 import com.tvplayer.core.model.WebDavConfig
 import com.tvplayer.core.repository.AppSettingsRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
@@ -53,6 +54,11 @@ class SettingsViewModel @Inject constructor(
         loadWebDavConfig()
         viewModelScope.launch {
             _playReminder.value = appSettingsRepository.getPlayReminder()
+            val settings = appSettingsRepository.getPlaybackSettings()
+            _playbackSpeed.value = settings.playbackSpeed
+            _seekStep.value = settings.seekStepSeconds
+            _subtitleSize.value = settings.subtitleSize
+            _dualSubtitle.value = settings.dualSubtitle
         }
     }
 
@@ -112,17 +118,33 @@ class SettingsViewModel @Inject constructor(
 
     fun updatePlaybackSpeed(speed: Float) {
         _playbackSpeed.value = speed
+        persistPlaybackSettings()
     }
 
     fun updateSeekStep(step: Int) {
         _seekStep.value = step
+        persistPlaybackSettings()
     }
 
     fun updateSubtitleSize(size: Float) {
         _subtitleSize.value = size
+        persistPlaybackSettings()
     }
 
     fun toggleDualSubtitle() {
         _dualSubtitle.value = !_dualSubtitle.value
+        persistPlaybackSettings()
+    }
+
+    private fun persistPlaybackSettings() {
+        val settings = PlaybackSettings(
+            playbackSpeed = _playbackSpeed.value,
+            seekStepSeconds = _seekStep.value,
+            subtitleSize = _subtitleSize.value,
+            dualSubtitle = _dualSubtitle.value
+        )
+        viewModelScope.launch {
+            appSettingsRepository.setPlaybackSettings(settings)
+        }
     }
 }

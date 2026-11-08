@@ -3,6 +3,7 @@ package com.tvplayer.core.repository.impl
 import com.tvplayer.core.db.AppSettingEntity
 import com.tvplayer.core.db.AppSettingsDao
 import com.tvplayer.core.model.PlayReminder
+import com.tvplayer.core.model.PlaybackSettings
 import com.tvplayer.core.model.RestDeadline
 import com.tvplayer.core.repository.AppSettingsRepository
 import kotlinx.coroutines.flow.Flow
@@ -52,6 +53,27 @@ class AppSettingsRepositoryImpl @Inject constructor(
         appSettingsDao.putAll(listOf(AppSettingEntity(KEY_REST_UNTIL, "0")))
     }
 
+    override suspend fun getPlaybackSettings(): PlaybackSettings {
+        val values = appSettingsDao.getAll().associate { it.settingKey to it.settingValue }
+        return PlaybackSettings(
+            playbackSpeed = values[KEY_PLAYBACK_SPEED]?.toFloatOrNull() ?: 1.0f,
+            seekStepSeconds = values[KEY_SEEK_STEP_SECONDS]?.toIntOrNull() ?: 10,
+            subtitleSize = values[KEY_SUBTITLE_SIZE]?.toFloatOrNull() ?: 1.0f,
+            dualSubtitle = values[KEY_DUAL_SUBTITLE] == "true"
+        )
+    }
+
+    override suspend fun setPlaybackSettings(settings: PlaybackSettings) {
+        appSettingsDao.putAll(
+            listOf(
+                AppSettingEntity(KEY_PLAYBACK_SPEED, settings.playbackSpeed.toString()),
+                AppSettingEntity(KEY_SEEK_STEP_SECONDS, settings.seekStepSeconds.toString()),
+                AppSettingEntity(KEY_SUBTITLE_SIZE, settings.subtitleSize.toString()),
+                AppSettingEntity(KEY_DUAL_SUBTITLE, settings.dualSubtitle.toString())
+            )
+        )
+    }
+
     private fun List<AppSettingEntity>.toPlayReminder(): PlayReminder {
         val values = associate { it.settingKey to it.settingValue }
         return PlayReminder(
@@ -70,5 +92,9 @@ class AppSettingsRepositoryImpl @Inject constructor(
         const val KEY_REMINDER_AUTO_RESUME = "playReminderAutoResume"
         const val KEY_REST_UNTIL = "playReminderRestUntil"
         const val KEY_REST_AUTO_RESUME = "playReminderRestAutoResume"
+        const val KEY_PLAYBACK_SPEED = "playSettingPlaybackSpeed"
+        const val KEY_SEEK_STEP_SECONDS = "playSettingSeekStepSeconds"
+        const val KEY_SUBTITLE_SIZE = "playSettingSubtitleSize"
+        const val KEY_DUAL_SUBTITLE = "playSettingDualSubtitle"
     }
 }

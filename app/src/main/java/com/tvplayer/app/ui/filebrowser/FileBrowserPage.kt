@@ -47,6 +47,8 @@ import com.tvplayer.webdav.SyncService
 @Composable
 fun FileBrowserPage(
     initialPath: String? = null,
+    isActive: Boolean = true,
+    refreshTick: Int = 0,
     viewModel: FileBrowserViewModel = hiltViewModel()
 ) {
     val currentPath by viewModel.currentPath.collectAsState()
@@ -69,15 +71,22 @@ fun FileBrowserPage(
     val scope = rememberCoroutineScope()
     val syncing = syncState as? SyncService.SyncState.Syncing
 
-    // 返回键先退回上级目录；停在根目录时交给 MainActivity 弹出退出确认
-    BackHandler(enabled = currentPath != "/") {
+    // 返回键先退回上级目录；停在根目录时交给 MainActivity 弹出退出确认。隐藏时不能劫持其它页的返回键
+    BackHandler(enabled = isActive && currentPath != "/") {
         viewModel.navigateToParent()
     }
 
-    LaunchedEffect(initialPath) {
-        val path = initialPath ?: "/"
-        viewModel.loadFiles(path)
+    LaunchedEffect(Unit) {
         viewModel.syncIfEmpty()
+    }
+
+    // 从首页进入指定目录；initialPath 被清空只代表离开页面，不重置本地目录
+    LaunchedEffect(initialPath, refreshTick) {
+        if (initialPath != null) {
+            viewModel.loadFiles(initialPath)
+        } else if (refreshTick > 0) {
+            viewModel.refresh()
+        }
     }
 
     LaunchedEffect(currentPath) {

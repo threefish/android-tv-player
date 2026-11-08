@@ -70,6 +70,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ImagesPage(
     onBackToTabs: () -> Unit,
+    isActive: Boolean = true,
+    refreshTick: Int = 0,
     viewModel: ImagesViewModel = hiltViewModel(),
 ) {
     val images by viewModel.images.collectAsState()
@@ -89,13 +91,14 @@ fun ImagesPage(
     val itemFocusRequester = remember { FocusRequester() }
     var pageHasFocus by remember { mutableStateOf(false) }
 
-    // 宫格内按返回先回到顶部当前 Tab，焦点已在工具栏时交给外层弹退出确认
-    BackHandler(enabled = pageHasFocus) {
+    // 宫格内按返回先回到顶部当前 Tab，焦点已在工具栏时交给外层弹退出确认。隐藏时不能劫持返回键
+    BackHandler(enabled = isActive && pageHasFocus) {
         onBackToTabs()
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.load()
+    // 每次切回图片 Tab 重新查一次本地库，新增同步的图片才能进入列表
+    LaunchedEffect(refreshTick) {
+        if (refreshTick > 0) viewModel.load()
     }
 
     LaunchedEffect(sortMenuExpanded) {

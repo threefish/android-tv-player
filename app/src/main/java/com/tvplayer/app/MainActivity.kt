@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -65,6 +66,21 @@ private fun MainLayout(onExit: () -> Unit) {
     var browserPath by remember { mutableStateOf<String?>(null) }
     var showExitConfirm by remember { mutableStateOf(false) }
     var tabFocusRequest by remember { mutableIntStateOf(0) }
+    // 访问过的页面保持组合，切 Tab 只改变可见性，避免每次重建整页
+    var visitedTabs by remember { mutableStateOf(setOf(0)) }
+    var fileRefreshTick by remember { mutableIntStateOf(0) }
+    var imageRefreshTick by remember { mutableIntStateOf(0) }
+
+    val onTabClick: (Int) -> Unit = { tab ->
+        if (tab != 1) browserPath = null
+        if (tab != selectedTab) {
+            // 重新进入列表页时做一次轻量刷新，数据变更（同步、删除）才能反映出来
+            if (tab == 1) fileRefreshTick++
+            if (tab == 2) imageRefreshTick++
+            selectedTab = tab
+        }
+        visitedTabs = visitedTabs + tab
+    }
 
     // 文件浏览页自行处理逐级退目录；能走到这里的返回都已在顶层，弹出退出确认
     BackHandler {
@@ -74,26 +90,43 @@ private fun MainLayout(onExit: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize()) {
         AppToolbar(
             activeTab = selectedTab,
-            onTabClick = { tab ->
-                if (tab != 1) browserPath = null
-                selectedTab = tab
-            },
+            onTabClick = onTabClick,
             tabFocusRequest = tabFocusRequest,
         )
 
         Box(modifier = Modifier.weight(1f)) {
-            when (selectedTab) {
-                0 -> HomePage(
-                    onOpenInBrowser = { path ->
-                        browserPath = path
-                        selectedTab = 1
-                    }
-                )
-                1 -> FileBrowserPage(initialPath = browserPath)
-                2 -> ImagesPage(
-                    onBackToTabs = { tabFocusRequest++ }
-                )
-                3 -> SettingsPage()
+            if (0 in visitedTabs) {
+                TabHost(visible = selectedTab == 0) {
+                    HomePage(
+                        onOpenInBrowser = { path ->
+                            browserPath = path
+                            onTabClick(1)
+                        }
+                    )
+                }
+            }
+            if (1 in visitedTabs) {
+                TabHost(visible = selectedTab == 1) {
+                    FileBrowserPage(
+                        initialPath = browserPath,
+                        isActive = selectedTab == 1,
+                        refreshTick = fileRefreshTick,
+                    )
+                }
+            }
+            if (2 in visitedTabs) {
+                TabHost(visible = selectedTab == 2) {
+                    ImagesPage(
+                        onBackToTabs = { tabFocusRequest++ },
+                        isActive = selectedTab == 2,
+                        refreshTick = imageRefreshTick,
+                    )
+                }
+            }
+            if (3 in visitedTabs) {
+                TabHost(visible = selectedTab == 3) {
+                    SettingsPage()
+                }
             }
         }
     }
@@ -103,6 +136,23 @@ private fun MainLayout(onExit: () -> Unit) {
             onConfirm = onExit,
             onDismiss = { showExitConfirm = false },
         )
+    }
+}
+
+/**
+ * 隐藏时不测量、不布局子节点：页面保留 remember/ViewModel，但不会绘制，
+ * 也不会因为 0 尺寸节点进入焦点遍历而抢走工具栏焦点。
+ */
+@Composable
+private fun TabHost(visible: Boolean, content: @Composable () -> Unit) {
+    Box(
+        modifier = if (visible) {
+            Modifier.fillMaxSize()
+        } else {
+            Modifier.layout { _, _ -> layout(0, 0) {} }
+        }
+    ) {
+        content()
     }
 }
 
