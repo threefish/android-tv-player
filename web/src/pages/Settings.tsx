@@ -50,27 +50,41 @@ export default function Settings() {
   const [showPassword, setShowPassword] = useState(false)
   const [workingId, setWorkingId] = useState<number | null>(null)
   const [reminderEnabled, setReminderEnabled] = useState(false)
-  const [reminderMinutes, setReminderMinutes] = useState('15')
+  const [reminderPlayMinutes, setReminderPlayMinutes] = useState('15')
+  const [reminderRestMinutes, setReminderRestMinutes] = useState('5')
+  const [reminderAutoResume, setReminderAutoResume] = useState(false)
   const [reminderSaving, setReminderSaving] = useState(false)
 
   useEffect(() => {
-    axios.get<{ enabled: boolean; minutes: number }>('/api/config/play-reminder')
+    axios.get<{ enabled: boolean; playMinutes: number; restMinutes: number; autoResume: boolean }>('/api/config/play-reminder')
       .then(res => {
         setReminderEnabled(res.data.enabled)
-        setReminderMinutes(String(res.data.minutes))
+        setReminderPlayMinutes(String(res.data.playMinutes))
+        setReminderRestMinutes(String(res.data.restMinutes))
+        setReminderAutoResume(res.data.autoResume)
       })
       .catch(() => toast.error('加载播放提醒设置失败'))
   }, [])
 
   const handleSaveReminder = async () => {
-    const minutes = Number(reminderMinutes)
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) {
-      toast.warning('提醒时长需为 1-240 之间的整数分钟')
+    const playMinutes = Number(reminderPlayMinutes)
+    const restMinutes = Number(reminderRestMinutes)
+    if (!Number.isInteger(playMinutes) || playMinutes < 1 || playMinutes > 240) {
+      toast.warning('连续播放时长需为 1-240 之间的整数分钟')
+      return
+    }
+    if (!Number.isInteger(restMinutes) || restMinutes < 1 || restMinutes > 240) {
+      toast.warning('休息时长需为 1-240 之间的整数分钟')
       return
     }
     setReminderSaving(true)
     try {
-      await axios.put('/api/config/play-reminder', { enabled: reminderEnabled, minutes })
+      await axios.put('/api/config/play-reminder', {
+        enabled: reminderEnabled,
+        playMinutes,
+        restMinutes,
+        autoResume: reminderAutoResume
+      })
       toast.success('播放提醒已保存')
     } catch {
       toast.error('保存播放提醒失败')
@@ -251,7 +265,7 @@ export default function Settings() {
                 <PlayIcon size={17} />
                 播放提醒
               </div>
-              <div className="card-sub">连续播放达到设定时长后自动暂停，电视上显示「休息一下」，按 OK 继续</div>
+              <div className="card-sub">连续播放达到设定时长后自动暂停进入休息，休息结束可手动确认或自动继续，休息屏显示今日累计观看分钟数</div>
             </div>
           </div>
           <div className="settings-card-body">
@@ -269,22 +283,68 @@ export default function Settings() {
                 </label>
               </div>
               <div className="field">
-                <label className="field-label" htmlFor="reminder-minutes">
-                  提醒时长（分钟）
+                <label className="field-label" htmlFor="reminder-play-minutes">
+                  连续播放时长（分钟）
                 </label>
                 <input
-                  id="reminder-minutes"
+                  id="reminder-play-minutes"
                   className="input"
                   type="number"
                   min={1}
                   max={240}
                   step={1}
-                  value={reminderMinutes}
+                  value={reminderPlayMinutes}
                   disabled={!reminderEnabled}
-                  onChange={event => setReminderMinutes(event.target.value)}
+                  onChange={event => setReminderPlayMinutes(event.target.value)}
                   style={{ maxWidth: 200 }}
                 />
-                <span className="field-hint">例如 15 表示每播放 15 分钟自动暂停一次，继续播放后重新计时</span>
+                <span className="field-hint">例如 15 表示每连续播放 15 分钟自动暂停一次，继续播放后重新计时</span>
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="reminder-rest-minutes">
+                  休息时长（分钟）
+                </label>
+                <input
+                  id="reminder-rest-minutes"
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={240}
+                  step={1}
+                  value={reminderRestMinutes}
+                  disabled={!reminderEnabled}
+                  onChange={event => setReminderRestMinutes(event.target.value)}
+                  style={{ maxWidth: 200 }}
+                />
+                <span className="field-hint">休息屏倒计时时长，倒计时期间随时可按 OK 立即继续播放</span>
+              </div>
+              <div className="field">
+                <label className="field-label">休息结束后</label>
+                <label className="field-label" htmlFor="reminder-manual">
+                  <input
+                    id="reminder-manual"
+                    type="radio"
+                    name="reminder-resume-mode"
+                    checked={!reminderAutoResume}
+                    disabled={!reminderEnabled}
+                    onChange={() => setReminderAutoResume(false)}
+                    style={{ marginRight: 8 }}
+                  />
+                  手动确认继续（电视上按 OK）
+                </label>
+                <label className="field-label" htmlFor="reminder-auto">
+                  <input
+                    id="reminder-auto"
+                    type="radio"
+                    name="reminder-resume-mode"
+                    checked={reminderAutoResume}
+                    disabled={!reminderEnabled}
+                    onChange={() => setReminderAutoResume(true)}
+                    style={{ marginRight: 8 }}
+                  />
+                  自动继续播放
+                </label>
+                <span className="field-hint">手动模式倒计时结束后停在休息屏等待确认；自动模式倒计时结束直接继续播放</span>
               </div>
               <div>
                 <button

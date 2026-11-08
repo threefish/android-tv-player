@@ -14,6 +14,9 @@ interface WebDavConfigDao {
     
     @Query("SELECT * FROM webdav_config WHERE id = :id")
     suspend fun getById(id: Long): WebDavConfigEntity?
+
+    @Query("SELECT * FROM webdav_config WHERE url = :url AND username = :username AND rootPath = :rootPath ORDER BY id ASC LIMIT 1")
+    suspend fun findByConnection(url: String, username: String, rootPath: String): WebDavConfigEntity?
     
     @Query("SELECT * FROM webdav_config ORDER BY id ASC")
     suspend fun getAll(): List<WebDavConfigEntity>

@@ -14,9 +14,10 @@ import androidx.room.RoomDatabase
         PlaylistEntity::class,
         HomeGridEntity::class,
         SeriesPlaylistEntity::class,
-        AppSettingEntity::class
+        AppSettingEntity::class,
+        DailyWatchTimeEntity::class
     ],
-    version = 4,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,4 +31,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun homeGridDao(): HomeGridDao
     abstract fun seriesPlaylistDao(): SeriesPlaylistDao
     abstract fun appSettingsDao(): AppSettingsDao
+    abstract fun dailyWatchTimeDao(): DailyWatchTimeDao
 }

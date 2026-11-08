@@ -7,10 +7,13 @@ import com.tvplayer.core.db.AppDatabase
 import com.tvplayer.core.db.AppSettingsDao
 import com.tvplayer.core.db.ChatMessageDao
 import com.tvplayer.core.db.ChatSessionDao
+import com.tvplayer.core.db.DailyWatchTimeDao
 import com.tvplayer.core.db.FileDao
 import com.tvplayer.core.db.HomeGridDao
 import com.tvplayer.core.db.MIGRATION_2_3
 import com.tvplayer.core.db.MIGRATION_3_4
+import com.tvplayer.core.db.MIGRATION_4_5
+import com.tvplayer.core.db.MIGRATION_5_6
 import com.tvplayer.core.db.PlayHistoryDao
 import com.tvplayer.core.db.PlaylistDao
 import com.tvplayer.core.db.SeriesPlaylistDao
@@ -33,7 +36,7 @@ object DatabaseModule {
             context,
             AppDatabase::class.java,
             "tvplayer.db"
-        ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+        ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -86,5 +89,10 @@ object DatabaseModule {
     @Provides
     fun provideAppSettingsDao(database: AppDatabase): AppSettingsDao {
         return database.appSettingsDao()
+    }
+
+    @Provides
+    fun provideDailyWatchTimeDao(database: AppDatabase): DailyWatchTimeDao {
+        return database.dailyWatchTimeDao()
     }
 }

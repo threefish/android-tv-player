@@ -24,7 +24,9 @@ class AppSettingsRepositoryImpl @Inject constructor(
         appSettingsDao.putAll(
             listOf(
                 AppSettingEntity(KEY_REMINDER_ENABLED, reminder.enabled.toString()),
-                AppSettingEntity(KEY_REMINDER_MINUTES, reminder.minutes.toString())
+                AppSettingEntity(KEY_REMINDER_PLAY_MINUTES, reminder.playMinutes.toString()),
+                AppSettingEntity(KEY_REMINDER_REST_MINUTES, reminder.restMinutes.toString()),
+                AppSettingEntity(KEY_REMINDER_AUTO_RESUME, reminder.autoResume.toString())
             )
         )
     }
@@ -33,12 +35,17 @@ class AppSettingsRepositoryImpl @Inject constructor(
         val values = associate { it.settingKey to it.settingValue }
         return PlayReminder(
             enabled = values[KEY_REMINDER_ENABLED] == "true",
-            minutes = values[KEY_REMINDER_MINUTES]?.toIntOrNull()?.coerceIn(1, 240) ?: 15
+            playMinutes = values[KEY_REMINDER_PLAY_MINUTES]?.toIntOrNull()?.coerceIn(1, 240) ?: 15,
+            restMinutes = values[KEY_REMINDER_REST_MINUTES]?.toIntOrNull()?.coerceIn(1, 240) ?: 5,
+            autoResume = values[KEY_REMINDER_AUTO_RESUME] == "true"
         )
     }
 
     private companion object {
         const val KEY_REMINDER_ENABLED = "playReminderEnabled"
-        const val KEY_REMINDER_MINUTES = "playReminderMinutes"
+        // 沿用旧键，升级前已配置的连续播放时长不丢
+        const val KEY_REMINDER_PLAY_MINUTES = "playReminderMinutes"
+        const val KEY_REMINDER_REST_MINUTES = "playReminderRestMinutes"
+        const val KEY_REMINDER_AUTO_RESUME = "playReminderAutoResume"
     }
 }

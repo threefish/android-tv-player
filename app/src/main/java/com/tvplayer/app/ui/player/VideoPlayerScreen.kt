@@ -95,7 +95,8 @@ fun VideoPlayerScreen(
     val isAudio by viewModel.isAudio.collectAsState()
     val finished by viewModel.finished.collectAsState()
     val loadError by viewModel.loadError.collectAsState()
-    val restReminder by viewModel.restReminder.collectAsState()
+    val restState by viewModel.restState.collectAsState()
+    val todayWatchSeconds by viewModel.todayWatchSeconds.collectAsState()
     val playlistEntries by viewModel.playlistEntries.collectAsState()
     val currentPlaylistIndex by viewModel.currentPlaylistIndex.collectAsState()
 
@@ -119,7 +120,13 @@ fun VideoPlayerScreen(
     var focusedSubtitleRow by remember { mutableIntStateOf(-1) }
     var finishedBackFocused by remember { mutableStateOf(false) }
     var interactionTick by remember { mutableIntStateOf(0) }
-    var restMessage by remember { mutableStateOf<String?>(null) }
+    var pauseRest by remember { mutableStateOf(false) }
+    // 休息屏文案：播放提醒休息优先于暂停 30 秒休息
+    val restMessage = when {
+        restState != null -> "休息一下"
+        pauseRest -> "休息中"
+        else -> null
+    }
     var showPlaylist by remember { mutableStateOf(false) }
     var focusedPlaylistRow by remember { mutableIntStateOf(-1) }
     val playlistListState = rememberLazyListState()
@@ -281,14 +288,14 @@ fun VideoPlayerScreen(
         }
     }
 
-    // 播放提醒触发：自动暂停已由 ViewModel 完成，这里只展示休息屏
-    LaunchedEffect(restReminder) {
-        if (restReminder) {
-            restMessage = "休息一下"
+    // 播放提醒触发：自动暂停与倒计时由 ViewModel 完成，这里收起其它界面
+    val restActive = restState != null
+    LaunchedEffect(restActive) {
+        if (restActive) {
+            pauseRest = false
             showControls = false
             showPlaylist = false
             showMenu = false
-            viewModel.acknowledgeRestReminder()
         }
     }
 
@@ -299,7 +306,7 @@ fun VideoPlayerScreen(
             !showMenu && !showSubtitleDialog && !showPlaylist
         ) {
             delay(30_000)
-            restMessage = "休息中"
+            pauseRest = true
             showControls = false
         }
     }
@@ -388,8 +395,12 @@ fun VideoPlayerScreen(
                         if (isDown) {
                             when (event.key) {
                                 Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                                    restMessage = null
-                                    viewModel.resume()
+                                    if (restState != null) {
+                                        viewModel.confirmRest()
+                                    } else {
+                                        pauseRest = false
+                                        viewModel.resume()
+                                    }
                                     showControls = true
                                 }
                                 Key.Back -> onBack()
@@ -1064,7 +1075,7 @@ fun VideoPlayerScreen(
             }
         }
 
-        // 休息屏：暂停 30 秒或播放提醒触发时全屏黑底，OK 继续播放
+        // 休息屏：播放提醒倒计时或暂停 30 秒触发，全屏黑底，OK 继续播放
         if (restMessage != null) {
             Box(
                 modifier = Modifier
@@ -1079,14 +1090,43 @@ fun VideoPlayerScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(
-                        text = restMessage ?: "",
+                        text = restMessage,
                         color = Color.White,
                         style = MaterialTheme.typography.headlineLarge
                     )
+                    val remainingSeconds = restState?.remainingSeconds ?: 0
+                    if (remainingSeconds > 0) {
+                        Text(
+                            text = formatTime(remainingSeconds * 1000L),
+                            color = Color.White,
+                            style = MaterialTheme.typography.displayMedium
+                        )
+                        Text(
+                            text = if (restState?.autoResume == true) {
+                                "倒计时结束后自动继续播放，按 OK 可立即继续"
+                            } else {
+                                "休息结束后按 OK 键继续播放"
+                            },
+                            color = Color(0xFF999999),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        Text(
+                            text = "按 OK 键继续播放",
+                            color = Color(0xFF999999),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    val watchHours = todayWatchSeconds / 3600
+                    val watchMinutes = (todayWatchSeconds % 3600) / 60
                     Text(
-                        text = "按 OK 键继续播放",
-                        color = Color(0xFF999999),
-                        style = MaterialTheme.typography.bodyMedium
+                        text = if (watchHours > 0) {
+                            "今日已观看 ${watchHours}小时${watchMinutes}分"
+                        } else {
+                            "今日已观看 ${watchMinutes}分"
+                        },
+                        color = Color(0xFFCCCCCC),
+                        style = MaterialTheme.typography.titleMedium
                     )
                 }
             }

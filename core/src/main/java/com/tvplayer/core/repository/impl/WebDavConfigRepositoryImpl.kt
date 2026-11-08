@@ -31,6 +31,13 @@ class WebDavConfigRepositoryImpl @Inject constructor(
     override suspend fun save(config: WebDavConfig): Long {
         val entity = config.toEntity()
         if (config.id == 0L) {
+            // 同地址+账号+根路径视为同一来源，更新旧行而不重复插入
+            val existing = webDavConfigDao.findByConnection(entity.url, entity.username, entity.rootPath)
+            if (existing != null) {
+                webDavConfigDao.update(entity.copy(id = existing.id, isEnabled = true, lastSyncTime = existing.lastSyncTime))
+                webDavConfigDao.setActive(existing.id)
+                return existing.id
+            }
             // 新增的来源直接启用，并停用其它来源
             val newId = webDavConfigDao.insert(entity.copy(isEnabled = true))
             webDavConfigDao.setActive(newId)

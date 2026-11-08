@@ -41,6 +41,7 @@ fun SettingsPage(
     val seekStep by viewModel.seekStep.collectAsState()
     val subtitleSize by viewModel.subtitleSize.collectAsState()
     val dualSubtitle by viewModel.dualSubtitle.collectAsState()
+    val playReminder by viewModel.playReminder.collectAsState()
 
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -148,6 +149,42 @@ fun SettingsPage(
             }
             SettingsRow("快进/快退步长") {
                 SeekStepSelector(currentStep = seekStep, onStepChange = viewModel::updateSeekStep)
+            }
+        }
+
+        // Play Reminder
+        SettingsSection(title = "播放提醒") {
+            SettingsRow("启用播放提醒") {
+                Switch(
+                    checked = playReminder.enabled,
+                    onCheckedChange = { viewModel.updatePlayReminder(playReminder.copy(enabled = it)) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = AppColors.primary,
+                        checkedTrackColor = AppColors.primaryContainer,
+                        uncheckedThumbColor = AppColors.onSurfaceVariant,
+                        uncheckedTrackColor = AppColors.outline,
+                    )
+                )
+            }
+            SettingsRow("连续播放时长") {
+                MinutesSelector(
+                    currentMinutes = playReminder.playMinutes,
+                    options = listOf(1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240),
+                    onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(playMinutes = it)) }
+                )
+            }
+            SettingsRow("休息时长") {
+                MinutesSelector(
+                    currentMinutes = playReminder.restMinutes,
+                    options = listOf(1, 3, 5, 10, 15, 20, 30, 60),
+                    onMinutesChange = { viewModel.updatePlayReminder(playReminder.copy(restMinutes = it)) }
+                )
+            }
+            SettingsRow("休息结束后") {
+                ResumeModeSelector(
+                    autoResume = playReminder.autoResume,
+                    onModeChange = { viewModel.updatePlayReminder(playReminder.copy(autoResume = it)) }
+                )
             }
         }
 
@@ -328,6 +365,39 @@ private fun SubtitleSizeSelector(currentSize: Float, onSizeChange: (Float) -> Un
             sizes.forEach { size ->
                 DropdownMenuItem(text = { Text("${(size * 100).toInt()}%") }, onClick = { onSizeChange(size); expanded = false })
             }
+        }
+    }
+}
+
+@Composable
+private fun MinutesSelector(currentMinutes: Int, options: List<Int>, onMinutesChange: (Int) -> Unit) {
+    // Web 端可设任意 1-240，选项列表并入当前值保证回显
+    val choices = remember(currentMinutes, options) { (options + currentMinutes).distinct().sorted() }
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        AppButton(onClick = { expanded = true }) {
+            Text("${currentMinutes}分钟")
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            choices.forEach { minutes ->
+                DropdownMenuItem(text = { Text("${minutes}分钟") }, onClick = { onMinutesChange(minutes); expanded = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResumeModeSelector(autoResume: Boolean, onModeChange: (Boolean) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        AppButton(onClick = { expanded = true }) {
+            Text(if (autoResume) "自动继续" else "手动确认")
+            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("手动确认继续") }, onClick = { onModeChange(false); expanded = false })
+            DropdownMenuItem(text = { Text("自动继续播放") }, onClick = { onModeChange(true); expanded = false })
         }
     }
 }

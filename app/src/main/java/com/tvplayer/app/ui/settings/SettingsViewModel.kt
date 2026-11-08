@@ -2,7 +2,9 @@ package com.tvplayer.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tvplayer.core.model.PlayReminder
 import com.tvplayer.core.model.WebDavConfig
+import com.tvplayer.core.repository.AppSettingsRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
 import com.tvplayer.webserver.WebServer
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,6 +17,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val webDavConfigRepository: WebDavConfigRepository,
+    private val appSettingsRepository: AppSettingsRepository,
     webServer: WebServer
 ) : ViewModel() {
 
@@ -41,10 +44,23 @@ class SettingsViewModel @Inject constructor(
     private val _dualSubtitle = MutableStateFlow(false)
     val dualSubtitle: StateFlow<Boolean> = _dualSubtitle.asStateFlow()
 
+    private val _playReminder = MutableStateFlow(PlayReminder())
+    val playReminder: StateFlow<PlayReminder> = _playReminder.asStateFlow()
+
     val version = "1.1.0"
 
     init {
         loadWebDavConfig()
+        viewModelScope.launch {
+            _playReminder.value = appSettingsRepository.getPlayReminder()
+        }
+    }
+
+    fun updatePlayReminder(reminder: PlayReminder) {
+        _playReminder.value = reminder
+        viewModelScope.launch {
+            appSettingsRepository.setPlayReminder(reminder)
+        }
     }
 
     private fun loadWebDavConfig() {

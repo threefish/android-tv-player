@@ -8,11 +8,13 @@ import android.util.Base64
 import android.util.Log
 import com.tvplayer.core.model.FileInfo
 import com.tvplayer.core.model.PlayHistory
+import com.tvplayer.core.model.PlayReminder
 import com.tvplayer.core.model.WebDavConfig
 import com.tvplayer.core.repository.AppSettingsRepository
 import com.tvplayer.core.repository.FileRepository
 import com.tvplayer.core.repository.PlayHistoryRepository
 import com.tvplayer.core.repository.SeriesPlaylistRepository
+import com.tvplayer.core.repository.WatchTimeRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
 import com.tvplayer.player.PlayerService
 import com.tvplayer.player.SubtitleFinder
@@ -22,6 +24,7 @@ import com.tvplayer.player.TrackInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,6 +51,12 @@ data class PlaylistEntry(
     val folderLabel: String
 )
 
+/** 播放提醒触发的休息状态：剩余倒计时秒数、是否到时自动继续 */
+data class RestState(
+    val remainingSeconds: Int,
+    val autoResume: Boolean
+)
+
 @HiltViewModel
 class VideoPlayerViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
@@ -57,7 +66,8 @@ class VideoPlayerViewModel @Inject constructor(
     private val fileRepository: FileRepository,
     private val seriesPlaylistRepository: SeriesPlaylistRepository,
     private val appSettingsRepository: AppSettingsRepository,
-    private val webDavConfigRepository: WebDavConfigRepository
+    private val webDavConfigRepository: WebDavConfigRepository,
+    private val watchTimeRepository: WatchTimeRepository
 ) : ViewModel() {
 
     private val videoPath: String = savedStateHandle.get<String>("videoPath") ?: ""
@@ -104,12 +114,58 @@ class VideoPlayerViewModel @Inject constructor(
     private val _finished = MutableStateFlow(false)
     val finished: StateFlow<Boolean> = _finished.asStateFlow()
 
-    /** 播放提醒触发：界面展示「休息一下」黑屏，OK 继续后由界面 ack */
-    private val _restReminder = MutableStateFlow(false)
-    val restReminder: StateFlow<Boolean> = _restReminder.asStateFlow()
+    /** 播放提醒触发后的休息状态；null 表示不在提醒休息中 */
+    private val _restState = MutableStateFlow<RestState?>(null)
+    val restState: StateFlow<RestState?> = _restState.asStateFlow()
 
-    fun acknowledgeRestReminder() {
-        _restReminder.value = false
+    /** 今日（本地 00:00 起）累计实际观看秒数 */
+    private val _todayWatchSeconds = MutableStateFlow(0L)
+    val todayWatchSeconds: StateFlow<Long> = _todayWatchSeconds.asStateFlow()
+
+    private var restCountdownJob: Job? = null
+    private var pendingWatchSeconds = 0L
+    private var pendingWatchDate = ""
+
+    /** 手动确认结束休息并继续播放 */
+    fun confirmRest() {
+        restCountdownJob?.cancel()
+        restCountdownJob = null
+        _restState.value = null
+        resume()
+    }
+
+    private suspend fun flushWatchTime() {
+        if (pendingWatchSeconds <= 0) return
+        val date = pendingWatchDate.ifEmpty { watchTimeRepository.todayKey() }
+        watchTimeRepository.addSeconds(date, pendingWatchSeconds)
+        pendingWatchSeconds = 0
+        _todayWatchSeconds.value = watchTimeRepository.getTodaySeconds()
+    }
+
+    private suspend fun startRest(reminder: PlayReminder) {
+        playerService.pause()
+        flushWatchTime()
+        _restState.value = RestState(reminder.restMinutes * 60, reminder.autoResume)
+        Log.d(
+            "VideoPlayerVM",
+            "play reminder triggered after ${reminder.playMinutes}min, rest=${reminder.restMinutes}min auto=${reminder.autoResume}"
+        )
+        restCountdownJob?.cancel()
+        restCountdownJob = viewModelScope.launch {
+            while (isActive) {
+                delay(1_000)
+                val current = _restState.value ?: return@launch
+                val remaining = current.remainingSeconds - 1
+                _restState.value = current.copy(remainingSeconds = remaining.coerceAtLeast(0))
+                if (remaining <= 0) {
+                    if (current.autoResume) {
+                        _restState.value = null
+                        resume()
+                    }
+                    return@launch
+                }
+            }
+        }
     }
 
     private var playlist: List<FileInfo> = emptyList()
@@ -143,6 +199,8 @@ class VideoPlayerViewModel @Inject constructor(
         /** 距片尾不足 10 秒或 5% 视为已看完，重新进入时从头播放 */
         const val RESUME_NEAR_END_MS = 10_000L
         const val RESUME_NEAR_END_PERCENT = 5L
+        /** 观看秒数攒够这么久落一次库，避免每秒写 SQLite */
+        const val WATCH_FLUSH_SECONDS = 30L
     }
 
     val playbackState = playerService.playbackState
@@ -193,10 +251,11 @@ class VideoPlayerViewModel @Inject constructor(
                 }
             }
         }
-        // 播放提醒：只累计实际播放时长，达到设定分钟数自动暂停；继续播放后重新计时
+        // 观看时长与播放提醒：只累计实际播放秒数；连续播放达标自动暂停进入休息，继续后重新计时
         viewModelScope.launch {
             var reminder = appSettingsRepository.getPlayReminder()
             var playedMs = 0L
+            _todayWatchSeconds.value = watchTimeRepository.getTodaySeconds()
             launch {
                 appSettingsRepository.getPlayReminderFlow().collect {
                     reminder = it
@@ -205,18 +264,22 @@ class VideoPlayerViewModel @Inject constructor(
             }
             while (isActive) {
                 delay(1_000)
-                if (!reminder.enabled) {
-                    playedMs = 0L
-                    continue
-                }
                 if (playerService.isPlaying.value) {
-                    playedMs += 1_000
-                    if (playedMs >= reminder.minutes * 60_000L) {
-                        playedMs = 0L
-                        playerService.pause()
-                        _restReminder.value = true
-                        Log.d("VideoPlayerVM", "play reminder triggered after ${reminder.minutes}min")
+                    val today = watchTimeRepository.todayKey()
+                    // 跨天先把旧累计落到旧日期，保证今日统计只含 00:00 之后的观看
+                    if (pendingWatchDate.isNotEmpty() && today != pendingWatchDate) flushWatchTime()
+                    pendingWatchDate = today
+                    pendingWatchSeconds++
+                    if (pendingWatchSeconds >= WATCH_FLUSH_SECONDS) flushWatchTime()
+                    if (reminder.enabled) {
+                        playedMs += 1_000
+                        if (playedMs >= reminder.playMinutes * 60_000L) {
+                            playedMs = 0L
+                            startRest(reminder)
+                        }
                     }
+                } else {
+                    flushWatchTime()
                 }
             }
         }
@@ -515,6 +578,13 @@ class VideoPlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         savePosition()
+        // viewModelScope 已取消，最后一段观看时长用独立 scope 落库
+        val date = pendingWatchDate
+        val seconds = pendingWatchSeconds
+        pendingWatchSeconds = 0
+        if (seconds > 0 && date.isNotEmpty()) {
+            historyScope.launch { watchTimeRepository.addSeconds(date, seconds) }
+        }
         playerService.release()
     }
 }

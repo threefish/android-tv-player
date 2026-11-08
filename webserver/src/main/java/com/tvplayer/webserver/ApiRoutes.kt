@@ -104,8 +104,9 @@ fun Routing.configureApiRoutes(
 
         put("/config/webdav") {
             val body = call.receive<WebDavConfigDto>()
-            val config = body.toWebDavConfig()
-            val id = webDavConfigRepository.save(config)
+            // 旧单配置保存语义：有激活项则更新，否则新增
+            val active = webDavConfigRepository.getActiveConfig()
+            val id = webDavConfigRepository.save(body.toWebDavConfig().copy(id = active?.id ?: 0))
             call.respond(IdResponse(id = id))
         }
 
@@ -305,18 +306,32 @@ fun Routing.configureApiRoutes(
             call.respond(SuccessResponse(success = true))
         }
 
-        // 播放提醒：播放达到设定分钟数后自动暂停休息
+        // 播放提醒：连续播放达标自动暂停，休息倒计时结束按配置自动或手动继续
         get("/config/play-reminder") {
             val reminder = appSettingsRepository.getPlayReminder()
-            call.respond(PlayReminderDto(enabled = reminder.enabled, minutes = reminder.minutes))
+            call.respond(
+                PlayReminderDto(
+                    enabled = reminder.enabled,
+                    playMinutes = reminder.playMinutes,
+                    restMinutes = reminder.restMinutes,
+                    autoResume = reminder.autoResume
+                )
+            )
         }
 
         put("/config/play-reminder") {
             val body = call.receive<PlayReminderDto>()
-            if (body.minutes !in 1..240) {
-                return@put call.respond(HttpStatusCode.BadRequest, "minutes must be 1..240")
+            if (body.playMinutes !in 1..240 || body.restMinutes !in 1..240) {
+                return@put call.respond(HttpStatusCode.BadRequest, "playMinutes and restMinutes must be 1..240")
             }
-            appSettingsRepository.setPlayReminder(PlayReminder(enabled = body.enabled, minutes = body.minutes))
+            appSettingsRepository.setPlayReminder(
+                PlayReminder(
+                    enabled = body.enabled,
+                    playMinutes = body.playMinutes,
+                    restMinutes = body.restMinutes,
+                    autoResume = body.autoResume
+                )
+            )
             call.respond(SuccessResponse(success = true))
         }
 
@@ -487,7 +502,12 @@ data class AiProviderConfigDto(
 )
 
 @Serializable
-data class PlayReminderDto(val enabled: Boolean = false, val minutes: Int = 15)
+data class PlayReminderDto(
+    val enabled: Boolean = false,
+    val playMinutes: Int = 15,
+    val restMinutes: Int = 5,
+    val autoResume: Boolean = false
+)
 
 @Serializable
 data class InputCreateResponse(val token: String, val url: String)

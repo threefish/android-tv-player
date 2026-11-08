@@ -7,6 +7,7 @@ import com.tvplayer.core.repository.HomeGridRepository
 import com.tvplayer.core.repository.PlayHistoryRepository
 import com.tvplayer.core.repository.PlaylistRepository
 import com.tvplayer.core.repository.SeriesPlaylistRepository
+import com.tvplayer.core.repository.WatchTimeRepository
 import com.tvplayer.core.repository.WebDavConfigRepository
 import com.tvplayer.core.repository.impl.AiProviderRepositoryImpl
 import com.tvplayer.core.repository.impl.AppSettingsRepositoryImpl
@@ -15,6 +16,7 @@ import com.tvplayer.core.repository.impl.HomeGridRepositoryImpl
 import com.tvplayer.core.repository.impl.PlayHistoryRepositoryImpl
 import com.tvplayer.core.repository.impl.PlaylistRepositoryImpl
 import com.tvplayer.core.repository.impl.SeriesPlaylistRepositoryImpl
+import com.tvplayer.core.repository.impl.WatchTimeRepositoryImpl
 import com.tvplayer.core.repository.impl.WebDavConfigRepositoryImpl
 import dagger.Binds
 import dagger.Module
@@ -57,4 +59,8 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindAppSettingsRepository(impl: AppSettingsRepositoryImpl): AppSettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindWatchTimeRepository(impl: WatchTimeRepositoryImpl): WatchTimeRepository
 }

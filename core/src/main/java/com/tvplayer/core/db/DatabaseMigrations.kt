@@ -22,3 +22,26 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
         )
     }
 }
+
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS daily_watch_time (" +
+                "date TEXT NOT NULL, seconds INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(date))"
+        )
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // 历史版本写入过同地址重复记录，同源保留最小 id
+        db.execSQL(
+            "DELETE FROM webdav_config WHERE id NOT IN " +
+                "(SELECT MIN(id) FROM webdav_config GROUP BY url, username, rootPath)"
+        )
+        db.execSQL(
+            "UPDATE webdav_config SET isEnabled = CASE WHEN id = " +
+                "(SELECT MIN(id) FROM webdav_config WHERE isEnabled = 1) THEN 1 ELSE 0 END"
+        )
+    }
+}
