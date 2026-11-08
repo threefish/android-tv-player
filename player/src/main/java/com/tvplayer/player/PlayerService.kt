@@ -725,6 +725,10 @@ class PlayerService @Inject constructor(
 
     fun release() {
         _isPlaying.value = false
+        // 单例跨播放页复用：不清零会让下一页误判 Ready/旧进度，休息后 resume 空转
+        _playbackState.value = PlaybackState.Idle
+        _currentPosition.value = 0L
+        _duration.value = 0L
         player?.release()
         player = null
         runCatching { vlcPlayer?.detachViews() }

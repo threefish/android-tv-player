@@ -9,6 +9,7 @@ import android.util.Log
 import com.tvplayer.core.model.FileInfo
 import com.tvplayer.core.model.PlayHistory
 import com.tvplayer.core.model.PlayReminder
+import com.tvplayer.core.model.RestDeadline
 import com.tvplayer.core.model.WebDavConfig
 import com.tvplayer.core.repository.AppSettingsRepository
 import com.tvplayer.core.repository.FileRepository
@@ -126,12 +127,57 @@ class VideoPlayerViewModel @Inject constructor(
     private var pendingWatchSeconds = 0L
     private var pendingWatchDate = ""
 
-    /** 手动确认结束休息并继续播放 */
+    /** 手动确认结束休息并继续播放；休息未休满时 OK 无效 */
     fun confirmRest() {
+        if (restBlocking()) return
         restCountdownJob?.cancel()
         restCountdownJob = null
+        finishRest()
+        resumeOrStart()
+    }
+
+    /** 休息未休满：挡住一切起播/恢复/切集，倒计时归零才放行 */
+    private fun restBlocking(): Boolean = (_restState.value?.remainingSeconds ?: 0) > 0
+
+    /** 进程被杀或退出重进时恢复未休完的休息，必须在起播前调用 */
+    private suspend fun restoreRestDeadline() {
+        val deadline = appSettingsRepository.getRestDeadline() ?: return
+        val remainingMs = deadline.untilMillis - System.currentTimeMillis()
+        if (remainingMs <= 0) {
+            appSettingsRepository.clearRestDeadline()
+            return
+        }
+        _restState.value = RestState(((remainingMs + 999) / 1000).toInt(), deadline.autoResume)
+        startRestCountdown()
+    }
+
+    private fun finishRest() {
         _restState.value = null
-        resume()
+        viewModelScope.launch { appSettingsRepository.clearRestDeadline() }
+    }
+
+    /** 休满后继续：起播曾被休息挡住（播放器空闲）时需重新起播 */
+    private fun resumeOrStart() {
+        if (playerService.playbackState.value is PlayerService.PlaybackState.Ready) resume() else startPlayback()
+    }
+
+    private fun startRestCountdown() {
+        restCountdownJob?.cancel()
+        restCountdownJob = viewModelScope.launch {
+            while (isActive) {
+                delay(1_000)
+                val current = _restState.value ?: return@launch
+                val remaining = current.remainingSeconds - 1
+                _restState.value = current.copy(remainingSeconds = remaining.coerceAtLeast(0))
+                if (remaining <= 0) {
+                    if (current.autoResume) {
+                        finishRest()
+                        resumeOrStart()
+                    }
+                    return@launch
+                }
+            }
+        }
     }
 
     private suspend fun flushWatchTime() {
@@ -145,27 +191,15 @@ class VideoPlayerViewModel @Inject constructor(
     private suspend fun startRest(reminder: PlayReminder) {
         playerService.pause()
         flushWatchTime()
+        // 截止时刻落库：退出应用或换视频重进仍须休满
+        val until = System.currentTimeMillis() + reminder.restMinutes * 60_000L
+        appSettingsRepository.setRestDeadline(RestDeadline(until, reminder.autoResume))
         _restState.value = RestState(reminder.restMinutes * 60, reminder.autoResume)
         Log.d(
             "VideoPlayerVM",
             "play reminder triggered after ${reminder.playMinutes}min, rest=${reminder.restMinutes}min auto=${reminder.autoResume}"
         )
-        restCountdownJob?.cancel()
-        restCountdownJob = viewModelScope.launch {
-            while (isActive) {
-                delay(1_000)
-                val current = _restState.value ?: return@launch
-                val remaining = current.remainingSeconds - 1
-                _restState.value = current.copy(remainingSeconds = remaining.coerceAtLeast(0))
-                if (remaining <= 0) {
-                    if (current.autoResume) {
-                        _restState.value = null
-                        resume()
-                    }
-                    return@launch
-                }
-            }
-        }
+        startRestCountdown()
     }
 
     private var playlist: List<FileInfo> = emptyList()
@@ -234,6 +268,7 @@ class VideoPlayerViewModel @Inject constructor(
         }
         // 历史必须在开播前加载完，否则会先用 0 开播、弹窗随后才出现
         viewModelScope.launch {
+            restoreRestDeadline()
             if (folderPath != null) {
                 if (loadFolderPlaylist()) _isReady.value = true
             } else {
@@ -286,6 +321,7 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     private fun onPlaybackEnded() {
+        if (restBlocking()) return
         if (playerService.isSingleLoop.value) return
         if (currentIndex in playlist.indices && currentIndex < playlist.size - 1) {
             playFile(playlist[currentIndex + 1], isAuto = true)
@@ -379,6 +415,7 @@ class VideoPlayerViewModel @Inject constructor(
 
     fun startPlayback(startPosition: Long? = null) {
         viewModelScope.launch {
+            if (restBlocking()) return@launch
             val config = webDavConfigRepository.getActiveConfig() ?: return@launch
             _finished.value = false
             val path = getCurrentFilePath()
@@ -404,6 +441,7 @@ class VideoPlayerViewModel @Inject constructor(
     private fun playFile(file: FileInfo, isAuto: Boolean = false) {
         savePosition()
         viewModelScope.launch {
+            if (restBlocking()) return@launch
             val config = webDavConfigRepository.getActiveConfig() ?: return@launch
             _finished.value = false
             currentIndex = playlist.indexOfFirst { it.path == file.path }
@@ -514,6 +552,7 @@ class VideoPlayerViewModel @Inject constructor(
     }
 
     fun resume() {
+        if (restBlocking()) return
         playerService.resume()
     }
 

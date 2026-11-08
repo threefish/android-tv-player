@@ -316,7 +316,7 @@ export default function Settings() {
                   onChange={event => setReminderRestMinutes(event.target.value)}
                   style={{ maxWidth: 200 }}
                 />
-                <span className="field-hint">休息屏倒计时时长，倒计时期间随时可按 OK 立即继续播放</span>
+                <span className="field-hint">休息屏倒计时时长，倒计时结束前不能继续播放，退出应用或切换视频也不会绕过休息</span>
               </div>
               <div className="field">
                 <label className="field-label">休息结束后</label>

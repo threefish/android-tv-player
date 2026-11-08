@@ -293,6 +293,7 @@ fun VideoPlayerScreen(
     LaunchedEffect(restActive) {
         if (restActive) {
             pauseRest = false
+            showResumeDialog = false
             showControls = false
             showPlaylist = false
             showMenu = false
@@ -1103,7 +1104,7 @@ fun VideoPlayerScreen(
                         )
                         Text(
                             text = if (restState?.autoResume == true) {
-                                "倒计时结束后自动继续播放，按 OK 可立即继续"
+                                "倒计时结束后自动继续播放"
                             } else {
                                 "休息结束后按 OK 键继续播放"
                             },
